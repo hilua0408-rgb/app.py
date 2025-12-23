@@ -26,7 +26,7 @@ api_key = st.text_input("GOOGLE_API_KEY", type="password", help="Paste your Gemi
 
 col1, col2 = st.columns(2)
 with col1:
-    # 1. Aapki Hardcoded List (Default)
+    # 1. Default List
     default_models = [
         "gemini-2.0-flash",
         "gemini-1.5-flash", 
@@ -37,39 +37,39 @@ with col1:
         "gemini-2.5-flash"
     ]
 
-    # Session State me models store karenge taake refresh par update ho sake
     if 'model_list' not in st.session_state:
         st.session_state['model_list'] = default_models
 
-    # Model Select Box
     model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'])
 
-    # --- 🔄 FETCH MODELS BUTTON ---
+    # --- 🔄 FIXED FETCH BUTTON ---
     if st.button("🔄 Fetch Available Models from API"):
         if not api_key:
             st.error("⚠️ Pehle API Key daalein!")
         else:
             try:
                 client = genai.Client(api_key=api_key)
-                # Google API se models mangwana
                 api_models = client.models.list()
                 
                 fetched_names = []
                 for m in api_models:
-                    # Sirf wo models jo generateContent support karte hain
-                    if "generateContent" in m.supported_generation_methods:
-                        # "models/gemini-1.5-flash" -> "gemini-1.5-flash" (clean name)
+                    # Fix: supported_generation_methods check hata diya (causing error)
+                    # Sirf Naam check karenge
+                    if hasattr(m, 'name') and 'gemini' in m.name.lower():
                         clean_name = m.name.replace("models/", "")
                         fetched_names.append(clean_name)
                 
-                # Naye models ko purani list ke sath merge karna (duplicates hata kar)
-                updated_list = list(set(default_models + fetched_names))
-                updated_list.sort(reverse=True) # Sort Z-A (Latest first usually)
-                
-                st.session_state['model_list'] = updated_list
-                st.success(f"✅ Found {len(fetched_names)} models! List updated.")
-                time.sleep(1)
-                st.rerun() # Page refresh taake list update ho jaye
+                if fetched_names:
+                    # Merge and Sort
+                    updated_list = list(set(default_models + fetched_names))
+                    updated_list.sort(reverse=True) # Newest first
+                    st.session_state['model_list'] = updated_list
+                    st.success(f"✅ Found {len(fetched_names)} models! List updated.")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("⚠️ No 'Gemini' models found via API.")
+                    
             except Exception as e:
                 st.error(f"❌ Fetch Error: {e}")
 
@@ -159,7 +159,6 @@ if start_button:
             token_stats_ph = st.empty()
             
             st.markdown("### Current Batch Status (Live):")
-            # Scrollable box
             with st.container(height=300, border=True):
                 console_box = st.empty()
             
@@ -170,7 +169,6 @@ if start_button:
             for file_idx, uploaded_file in enumerate(uploaded_files):
                 file_num = file_idx + 1
                 
-                # Parsing
                 proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
                 total_lines = proc.parse()
                 
@@ -215,7 +213,6 @@ Batch:
                                 if chunk_resp.usage_metadata:
                                     batch_tokens = chunk_resp.usage_metadata.total_token_count
 
-                            # Token update
                             total_session_tokens += batch_tokens
                             token_stats_ph.markdown(f"**Batch Tokens:** `{batch_tokens}` | **Total Tokens:** `{total_session_tokens}`")
 
