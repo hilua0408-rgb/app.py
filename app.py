@@ -23,7 +23,7 @@ api_key = st.text_input("GOOGLE_API_KEY", type="password")
 
 col1, col2 = st.columns(2)
 with col1:
-    # Full list of requested models
+    # Full list of requested models preserved
     model_list = [
         "gemini-3-pro-preview", "gemini-3-flash-preview", 
         "gemini-2.5-pro", "gemini-2.5-flash",
@@ -108,8 +108,8 @@ if start_button:
             proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
             total_lines = proc.parse()
             
-            # Live Stream Header
-            st.subheader("📺 Live Translation Stream")
+            # Streaming Container Header (Glitch Fix)
+            st.markdown("### 📺 Live Translation Stream")
             st_stream_box = st.empty() 
             
             trans_map = {}
@@ -124,9 +124,9 @@ if start_button:
 TASK: Translate from {source_lang} to {target_lang}
 USER NOTE: {user_instr}
 
-CRITICAL RULES:
-1. Format: [ID] then Translated Text.
-2. MUST use streaming to show results line by line.
+FORMAT RULES:
+1. Return [ID] then Translated Text.
+2. Keep it line by line.
 
 Batch:
 {batch_txt}"""
@@ -141,17 +141,17 @@ Batch:
                         # Streaming response loop
                         for chunk_resp in client.models.generate_content_stream(model=model_name, contents=prompt):
                             full_response += chunk_resp.text
-                            # Auto-scroll HTML/JS component
-                            html_stream = f"""
-                            <div id="scroll-container" style="height:350px; overflow-y:auto; background-color:#1a1c24; color:#ffffff; padding:15px; font-family:monospace; border-radius:10px; border:1px solid #444; white-space: pre-wrap; font-size:14px; line-height:1.5;">
-                                {full_response}
+                            # Smooth Auto-scroll Component (ChatGPT style)
+                            html_content = f"""
+                            <div id="terminal" style="height:400px; overflow-y:auto; background-color:#0e1117; color:#00ff41; padding:20px; font-family:'Courier New', monospace; border-radius:10px; border:1px solid #333; white-space: pre-wrap; font-size:14px;">
+                                {full_response}<div id="anchor"></div>
                             </div>
                             <script>
-                                var element = document.getElementById("scroll-container");
-                                element.scrollTop = element.scrollHeight;
+                                var objDiv = document.getElementById("terminal");
+                                objDiv.scrollTop = objDiv.scrollHeight;
                             </script>
                             """
-                            st_stream_box.html(html_stream)
+                            st_stream_box.html(html_content)
                         
                         # Extract data after stream completes
                         matches = list(re.finditer(r'\[(\d+)\]\s*\n(.*?)(?=\n\[\d+\]|$)', full_response, re.DOTALL))
@@ -165,7 +165,7 @@ Batch:
                         time.sleep(2)
                 
                 progress_bar.progress(min((i + batch_sz) / total_lines, 1.0))
-                time.sleep(1)
+                time.sleep(0.5)
 
             if trans_map:
                 st.success("🎉 Translation Complete!")
