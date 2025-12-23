@@ -11,7 +11,6 @@ st.set_page_config(page_title="Gemini Subtitle Pro", layout="wide")
 # --- 📱 SIDEBAR (File Section) ---
 with st.sidebar:
     st.header("📁 File Upload")
-    # Change: accept_multiple_files=True kar diya taake "1 / X" logic kaam kare
     uploaded_files = st.file_uploader(
         "Upload Subtitle Files", 
         type=['srt', 'vtt', 'ass'], 
@@ -27,11 +26,14 @@ api_key = st.text_input("GOOGLE_API_KEY", type="password", help="Paste your Gemi
 
 col1, col2 = st.columns(2)
 with col1:
+    # --- MODEL LIST RESTORED & ORDERED ---
     model_list = [
+        "gemini-2.0-flash-thinking-exp",
+        "gemini-2.0-pro-exp",
+        "gemini-2.0-flash-exp",
         "gemini-2.0-flash",
-        "gemini-1.5-flash", 
         "gemini-1.5-pro",
-        "gemini-2.5-flash"
+        "gemini-1.5-flash"
     ]
     model_name = st.selectbox("MODEL_NAME", model_list)
     source_lang = st.text_input("SOURCE_LANGUAGE", "English")
@@ -110,18 +112,17 @@ if start_button:
         try:
             client = genai.Client(api_key=api_key)
             
-            # --- STATUS DASHBOARD (Screenshot Lookalike) ---
+            # --- STATUS DASHBOARD ---
             st.markdown("## Translation Status")
             st.markdown("---")
             
-            # Placeholders create kar rahe hain jo baar baar update honge
-            file_status_ph = st.empty()   # "Processing file 1 / 5: Name"
-            progress_text_ph = st.empty() # "File Progress: 10 / 500"
-            progress_bar = st.progress(0) # The Bar
-            token_stats_ph = st.empty()   # "Batch Tokens: 0 Total: 0"
+            file_status_ph = st.empty()
+            progress_text_ph = st.empty()
+            progress_bar = st.progress(0)
+            token_stats_ph = st.empty()
             
             st.markdown("### Current Batch Status (Live):")
-            # Fixed height container (Scrollable)
+            # Scrollable box
             with st.container(height=300, border=True):
                 console_box = st.empty()
             
@@ -136,7 +137,6 @@ if start_button:
                 proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
                 total_lines = proc.parse()
                 
-                # Init File UI
                 file_status_ph.markdown(f"### 📂 Processing file {file_num} / {total_files_count}: **{uploaded_file.name}**")
                 
                 trans_map = {}
@@ -147,7 +147,6 @@ if start_button:
                     chunk = proc.lines[i : i + batch_sz]
                     batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
                     
-                    # Update Progress Text
                     progress_text_ph.text(f"File Progress: {min(i + batch_sz, total_lines)} / {total_lines} Subtitles")
                     
                     prompt = f"""You are a professional subtitle translation AI.
@@ -176,7 +175,6 @@ Batch:
                                     full_batch_response += chunk_resp.text
                                     console_box.markdown(f"**Batch {current_batch_num} Translating...**\n\n```text\n{full_batch_response}\n```")
                                 
-                                # Token Counting Logic (Check usage metadata in stream chunks)
                                 if chunk_resp.usage_metadata:
                                     batch_tokens = chunk_resp.usage_metadata.total_token_count
 
@@ -194,10 +192,8 @@ Batch:
                             st.error(f"Error: {e}")
                             retry -= 1; time.sleep(2)
                     
-                    # Update Bar
                     progress_bar.progress(min((i + batch_sz) / total_lines, 1.0))
                 
-                # File Complete -> Download Button
                 if trans_map:
                     out_content = proc.get_output(trans_map)
                     st.success(f"✅ {uploaded_file.name} Completed!")
@@ -205,7 +201,7 @@ Batch:
                         f"⬇️ DOWNLOAD {uploaded_file.name}", 
                         data=out_content, 
                         file_name=f"translated_{uploaded_file.name}",
-                        key=f"dl_{file_idx}" # Unique key for multiple buttons
+                        key=f"dl_{file_idx}"
                     )
 
             st.balloons()
