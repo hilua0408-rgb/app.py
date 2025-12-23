@@ -113,50 +113,40 @@ with col2:
     target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
     batch_sz = st.number_input("BATCH_SIZE", 1, 500, 20)
 
-# --- FEATURES SECTION ---
-st.markdown("### ⚡ Features")
+# --- FEATURES SECTION (UPDATED LAYOUT) ---
+st.markdown("### ⚡ Workflow Steps")
 
-f_col1, f_col2, f_col3 = st.columns(3)
-with f_col1:
-    enable_memory = st.checkbox(
-        "🧠 Context Memory", 
-        value=True, 
-        help="Maintains story continuity across batches."
-    )
-with f_col2:
-    enable_analysis = st.checkbox(
-        "🧐 Deep File Analysis", 
-        value=False, 
-        help="Reads full file first to understand Context/Gender/Tone."
-    )
-with f_col3:
-    enable_revision = st.checkbox(
-        "✨ Full File Revision",
-        value=False,
-        help="One-shot polish of the translated file to fix grammar/flow."
-    )
+# 1. Memory
+enable_memory = st.checkbox("🧠 1. Context Memory (Maintains story flow)", value=True)
 
-# Analysis Instructions (Conditional)
-analysis_instr = ""
+st.divider()
+
+# 2. Analysis
+enable_analysis = st.checkbox("🧐 2. Deep File Analysis (Read full file first)", value=False)
 if enable_analysis:
     analysis_instr = st.text_area(
         "Analysis Context Note", 
-        placeholder="E.g. 'Keep tone formal', 'Main character is female'...",
+        placeholder="E.g. 'Main character is female, keep tone serious...'",
         height=68
     )
+else: analysis_instr = ""
 
-# Revision Instructions (Conditional)
-revision_instr = ""
+st.divider()
+
+# 3. Revision (Placed directly after Analysis as requested)
+enable_revision = st.checkbox("✨ 3. Revision / Polish (Fix grammar & flow after translation)", value=False)
 if enable_revision:
     revision_instr = st.text_area(
         "Revision Instructions",
-        placeholder="E.g. 'Fix grammar, make flow natural, check gender consistency'",
+        placeholder="E.g. 'Fix grammar, check gender consistency, make it sound like Anime...'",
         height=68
     )
+else: revision_instr = ""
+
 
 # --- USER INSTRUCTIONS ---
 st.markdown("---")
-user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
+user_instr = st.text_area("USER_INSTRUCTION (For Main Translation)", "Translate into natural Roman Hindi. Keep Anime terms in English.")
 
 start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
 
