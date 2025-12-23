@@ -32,7 +32,6 @@ with st.sidebar:
             st.rerun()
 
 # --- 🖥️ MAIN INTERFACE ---
-# Title ko chota kar diya (h3 size)
 st.markdown("### ✨ Gemini Subtitle Translator")
 
 # --- ⚙️ API CONFIGURATION ---
@@ -76,7 +75,9 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
         with c_s2: 
             if st.button("Check Status", use_container_width=True):
                 try: 
-                    genai.Client(api_key=st.session_state.active_key).models.list(config={'page_size': 1})
+                    # --- FIX: Using 'with' block to keep client open ---
+                    with genai.Client(api_key=st.session_state.active_key) as client:
+                        list(client.models.list(config={'page_size': 1}))
                     st.session_state.api_status = "Alive 🟢"
                 except: st.session_state.api_status = "Dead 🔴"
                 st.rerun()
@@ -99,7 +100,10 @@ with col1:
     if st.button("🔄 Fetch Models"):
         if st.session_state.active_key:
             try:
-                api_models = genai.Client(api_key=st.session_state.active_key).models.list()
+                # --- FIX: Using 'with' block here too ---
+                with genai.Client(api_key=st.session_state.active_key) as client:
+                    api_models = list(client.models.list())
+                    
                 fetched = [m.name.replace("models/", "") for m in api_models if 'gemini' in m.name.lower()]
                 if fetched:
                     st.session_state['model_list'] = sorted(list(set(default_models + fetched)), reverse=True)
@@ -123,7 +127,6 @@ with f_col1:
         help="Remembers the last batch to maintain story continuity."
     )
 with f_col2:
-    # --- CHANGED: Default Value = False (Unticked) ---
     enable_analysis = st.checkbox(
         "🧐 Deep File Analysis", 
         value=False, 
@@ -203,38 +206,39 @@ if start_button:
         st.error("❌ Add API Key & Upload Files!")
     else:
         try:
-            client = genai.Client(api_key=st.session_state.active_key)
-            st.markdown("## Translation Status")
-            st.markdown("---")
-            
-            file_status_ph = st.empty()
-            progress_text_ph = st.empty()
-            progress_bar = st.progress(0)
-            token_stats_ph = st.empty()
-            
-            st.markdown("### Live Console:")
-            with st.container(height=300, border=True):
-                console_box = st.empty()
-            
-            total_session_tokens = 0
-            
-            for file_idx, uploaded_file in enumerate(uploaded_files):
-                if uploaded_file.name in st.session_state.skipped_files:
-                    st.warning(f"⏩ Skipping {uploaded_file.name}."); time.sleep(1); continue
+            # --- FIX: Using 'with' block for main translation client ---
+            with genai.Client(api_key=st.session_state.active_key) as client:
+                st.markdown("## Translation Status")
+                st.markdown("---")
                 
-                proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
-                total_lines = proc.parse()
-                file_status_ph.markdown(f"### 📂 File {file_idx+1}/{len(uploaded_files)}: **{uploaded_file.name}**")
+                file_status_ph = st.empty()
+                progress_text_ph = st.empty()
+                progress_bar = st.progress(0)
+                token_stats_ph = st.empty()
                 
-                # --- PHASE 1: FULL FILE ANALYSIS ---
-                file_context_summary = "No analysis requested."
+                st.markdown("### Live Console:")
+                with st.container(height=300, border=True):
+                    console_box = st.empty()
                 
-                if enable_analysis:
-                    try:
-                        console_box.info("🧠 Analyzing the full file context... Please wait.")
-                        full_script = "\n".join([f"{x['id']}: {x['txt']}" for x in proc.lines])
-                        
-                        analysis_system_prompt = f"""
+                total_session_tokens = 0
+                
+                for file_idx, uploaded_file in enumerate(uploaded_files):
+                    if uploaded_file.name in st.session_state.skipped_files:
+                        st.warning(f"⏩ Skipping {uploaded_file.name}."); time.sleep(1); continue
+                    
+                    proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
+                    total_lines = proc.parse()
+                    file_status_ph.markdown(f"### 📂 File {file_idx+1}/{len(uploaded_files)}: **{uploaded_file.name}**")
+                    
+                    # --- PHASE 1: FULL FILE ANALYSIS ---
+                    file_context_summary = "No analysis requested."
+                    
+                    if enable_analysis:
+                        try:
+                            console_box.info("🧠 Analyzing the full file context... Please wait.")
+                            full_script = "\n".join([f"{x['id']}: {x['txt']}" for x in proc.lines])
+                            
+                            analysis_system_prompt = f"""
 ROLE: You are a LOGIC-ONLY DATA ANALYST.
 INPUT CONSTRAINTS: Input contains {total_lines} lines.
 YOUR TASK: Provide a context report based ONLY on the provided text.
@@ -248,45 +252,45 @@ User Instructions: "{analysis_instr}"
 INPUT TEXT:
 {full_script}
 """
-                        ana_stream = client.models.generate_content_stream(
-                            model=model_name,
-                            contents=analysis_system_prompt,
-                            config=types.GenerateContentConfig(temperature=0.3)
-                        )
-                        
-                        full_analysis_text = ""
-                        for chunk in ana_stream:
-                            if chunk.text:
-                                full_analysis_text += chunk.text
-                                console_box.markdown(f"**🧠 Analyzing File...**\n\n{full_analysis_text}")
-                        
-                        file_context_summary = full_analysis_text
-                        console_box.success("✅ Analysis Complete! Starting Translation...")
-                        time.sleep(1.5)
-                        
-                    except Exception as e:
-                        console_box.error(f"⚠️ Analysis Failed: {e}. Proceeding without context.")
-                        file_context_summary = "Analysis failed."
-                        time.sleep(2)
+                            ana_stream = client.models.generate_content_stream(
+                                model=model_name,
+                                contents=analysis_system_prompt,
+                                config=types.GenerateContentConfig(temperature=0.3)
+                            )
+                            
+                            full_analysis_text = ""
+                            for chunk in ana_stream:
+                                if chunk.text:
+                                    full_analysis_text += chunk.text
+                                    console_box.markdown(f"**🧠 Analyzing File...**\n\n{full_analysis_text}")
+                            
+                            file_context_summary = full_analysis_text
+                            console_box.success("✅ Analysis Complete! Starting Translation...")
+                            time.sleep(1.5)
+                            
+                        except Exception as e:
+                            console_box.error(f"⚠️ Analysis Failed: {e}. Proceeding without context.")
+                            file_context_summary = "Analysis failed."
+                            time.sleep(2)
 
-                # --- PHASE 2: BATCH TRANSLATION ---
-                trans_map = {}
-                progress_text_ph.text(f"✅ Completed: 0 / {total_lines}")
-                progress_bar.progress(0)
-                cooldown_hits = 0; MAX_COOLDOWN_HITS = 3
-                
-                previous_batch_context = ""
-
-                for i in range(0, total_lines, batch_sz):
-                    current_batch_num = (i // batch_sz) + 1
-                    chunk = proc.lines[i : i + batch_sz]
-                    batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
+                    # --- PHASE 2: BATCH TRANSLATION ---
+                    trans_map = {}
+                    progress_text_ph.text(f"✅ Completed: 0 / {total_lines}")
+                    progress_bar.progress(0)
+                    cooldown_hits = 0; MAX_COOLDOWN_HITS = 3
                     
-                    memory_block = ""
-                    if enable_memory and previous_batch_context:
-                        memory_block = f"\n[PREVIOUS TRANSLATED BATCH - FOR FLOW]:\n{previous_batch_context}\n(Continue the story smoothly from here)\n"
+                    previous_batch_context = ""
 
-                    prompt = f"""You are a professional translator.
+                    for i in range(0, total_lines, batch_sz):
+                        current_batch_num = (i // batch_sz) + 1
+                        chunk = proc.lines[i : i + batch_sz]
+                        batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
+                        
+                        memory_block = ""
+                        if enable_memory and previous_batch_context:
+                            memory_block = f"\n[PREVIOUS TRANSLATED BATCH - FOR FLOW]:\n{previous_batch_context}\n(Continue the story smoothly from here)\n"
+
+                        prompt = f"""You are a professional translator.
 TASK: Translate {source_lang} to {target_lang}.
 
 [FILE CONTEXT & SUMMARY]:
@@ -305,70 +309,70 @@ Translated Text
 
 [BATCH TO TRANSLATE]:
 {batch_txt}"""
+                        
+                        retry = 3; success = False
+                        
+                        while retry > 0:
+                            try:
+                                start_line = i + 1; end_line = min(i + batch_sz, total_lines)
+                                console_box.markdown(f"**⏳ Batch {current_batch_num} ({start_line}-{end_line})...**")
+                                if i > 0: time.sleep(delay_ms / 1000.0)
+
+                                response_stream = client.models.generate_content_stream(
+                                    model=model_name, contents=prompt,
+                                    config=types.GenerateContentConfig(temperature=temp_val, max_output_tokens=max_tok_val)
+                                )
+                                
+                                full_resp = ""
+                                for chunk_resp in response_stream:
+                                    if chunk_resp.text:
+                                        full_resp += chunk_resp.text
+                                        console_box.markdown(f"**Translating...**\n\n```text\n{full_resp}\n```")
+                                    if chunk_resp.usage_metadata:
+                                        total_session_tokens += chunk_resp.usage_metadata.total_token_count
+                                        token_stats_ph.markdown(f"**Tokens:** `{total_session_tokens}`")
+
+                                clean_text = full_resp.replace("```", "").replace("**", "")
+                                matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', clean_text, re.DOTALL))
+                                
+                                if matches:
+                                    for m in matches: trans_map[m.group(1)] = m.group(2).strip()
+                                    if enable_memory: previous_batch_context = clean_text[-1000:] 
+                                    success = True; break
+                                else: console_box.warning("⚠️ Formatting Error. Retrying..."); retry -= 1; time.sleep(1)
+
+                            except Exception as e:
+                                err_msg = str(e).lower()
+                                if ("429" in err_msg or "quota" in err_msg) and enable_cooldown:
+                                    if cooldown_hits < MAX_COOLDOWN_HITS:
+                                        console_box.error(f"🛑 Limit Hit! Waiting 90s... ({cooldown_hits+1}/{MAX_COOLDOWN_HITS})")
+                                        bar = st.progress(0)
+                                        for s in range(90): time.sleep(1); bar.progress((s+1)/90)
+                                        bar.empty(); cooldown_hits += 1; console_box.info("♻️ Resuming..."); continue 
+                                    else: console_box.error("❌ Max Cooldowns reached."); retry=0; break
+                                else: console_box.error(f"Error: {e}"); retry -= 1; time.sleep(2)
+
+                        if success:
+                            fin = min(i + batch_sz, total_lines)
+                            progress_text_ph.text(f"✅ Completed: {fin} / {total_lines}")
+                            progress_bar.progress(fin / total_lines)
+                        else:
+                            st.error(f"❌ Batch {current_batch_num} FAILED.")
+                            st.markdown("### ⚠️ Choose Action:")
+                            c1, c2 = st.columns(2)
+                            with c1: 
+                                if st.button("🔄 Try Again", key=f"r_{file_idx}_{current_batch_num}", use_container_width=True): st.rerun()
+                            with c2: 
+                                if file_idx < len(uploaded_files)-1 and st.button("⏭️ Skip File", key=f"s_{file_idx}", use_container_width=True):
+                                    st.session_state.skipped_files.append(uploaded_file.name); st.rerun()
+                            st.stop()
                     
-                    retry = 3; success = False
-                    
-                    while retry > 0:
-                        try:
-                            start_line = i + 1; end_line = min(i + batch_sz, total_lines)
-                            console_box.markdown(f"**⏳ Batch {current_batch_num} ({start_line}-{end_line})...**")
-                            if i > 0: time.sleep(delay_ms / 1000.0)
+                    if trans_map:
+                        out = proc.get_output(trans_map)
+                        st.success(f"✅ {uploaded_file.name} Done!")
+                        st.download_button(f"⬇️ DOWNLOAD", out, f"trans_{uploaded_file.name}", key=f"d{file_idx}")
 
-                            response_stream = client.models.generate_content_stream(
-                                model=model_name, contents=prompt,
-                                config=types.GenerateContentConfig(temperature=temp_val, max_output_tokens=max_tok_val)
-                            )
-                            
-                            full_resp = ""
-                            for chunk_resp in response_stream:
-                                if chunk_resp.text:
-                                    full_resp += chunk_resp.text
-                                    console_box.markdown(f"**Translating...**\n\n```text\n{full_resp}\n```")
-                                if chunk_resp.usage_metadata:
-                                    total_session_tokens += chunk_resp.usage_metadata.total_token_count
-                                    token_stats_ph.markdown(f"**Tokens:** `{total_session_tokens}`")
-
-                            clean_text = full_resp.replace("```", "").replace("**", "")
-                            matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', clean_text, re.DOTALL))
-                            
-                            if matches:
-                                for m in matches: trans_map[m.group(1)] = m.group(2).strip()
-                                if enable_memory: previous_batch_context = clean_text[-1000:] 
-                                success = True; break
-                            else: console_box.warning("⚠️ Formatting Error. Retrying..."); retry -= 1; time.sleep(1)
-
-                        except Exception as e:
-                            err_msg = str(e).lower()
-                            if ("429" in err_msg or "quota" in err_msg) and enable_cooldown:
-                                if cooldown_hits < MAX_COOLDOWN_HITS:
-                                    console_box.error(f"🛑 Limit Hit! Waiting 90s... ({cooldown_hits+1}/{MAX_COOLDOWN_HITS})")
-                                    bar = st.progress(0)
-                                    for s in range(90): time.sleep(1); bar.progress((s+1)/90)
-                                    bar.empty(); cooldown_hits += 1; console_box.info("♻️ Resuming..."); continue 
-                                else: console_box.error("❌ Max Cooldowns reached."); retry=0; break
-                            else: console_box.error(f"Error: {e}"); retry -= 1; time.sleep(2)
-
-                    if success:
-                        fin = min(i + batch_sz, total_lines)
-                        progress_text_ph.text(f"✅ Completed: {fin} / {total_lines}")
-                        progress_bar.progress(fin / total_lines)
-                    else:
-                        st.error(f"❌ Batch {current_batch_num} FAILED.")
-                        st.markdown("### ⚠️ Choose Action:")
-                        c1, c2 = st.columns(2)
-                        with c1: 
-                            if st.button("🔄 Try Again", key=f"r_{file_idx}_{current_batch_num}", use_container_width=True): st.rerun()
-                        with c2: 
-                            if file_idx < len(uploaded_files)-1 and st.button("⏭️ Skip File", key=f"s_{file_idx}", use_container_width=True):
-                                st.session_state.skipped_files.append(uploaded_file.name); st.rerun()
-                        st.stop()
-                
-                if trans_map:
-                    out = proc.get_output(trans_map)
-                    st.success(f"✅ {uploaded_file.name} Done!")
-                    st.download_button(f"⬇️ DOWNLOAD", out, f"trans_{uploaded_file.name}", key=f"d{file_idx}")
-
-            st.balloons()
-            st.success("🎉 Process Complete!")
+                st.balloons()
+                st.success("🎉 Process Complete!")
     
         except Exception as e: st.error(f"❌ Fatal Error: {e}")
