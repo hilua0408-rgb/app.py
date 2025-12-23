@@ -8,46 +8,35 @@ from google import genai
 # Page Setup
 st.set_page_config(page_title="Gemini Subtitle Pro", layout="wide")
 
-# --- 📱 SIDEBAR (File Section) ---
+# --- 📱 SIDEBAR (File Upload & Progress) ---
 with st.sidebar:
     st.header("📁 File Upload")
-    # File uploader moved to sidebar as requested
     uploaded_file = st.file_uploader("Upload Subtitle File (.srt, .vtt, .ass)", type=['srt', 'vtt', 'ass'])
     st.markdown("---")
     status_text = st.empty()
     progress_bar = st.progress(0)
 
-# --- 🖥️ MAIN INTERFACE (Settings & Controls) ---
+# --- 🖥️ MAIN INTERFACE (Settings) ---
 st.title("✨ Gemini Subtitle Translator")
 
-# 1. API KEY (Main Page)
-api_key = st.text_input("GOOGLE_API_KEY", type="password", help="Paste your Gemini API Key here")
+api_key = st.text_input("GOOGLE_API_KEY", type="password", help="Paste your Gemini API Key")
 
 col1, col2 = st.columns(2)
 with col1:
-    # 2. FULL MODEL LIST (Restored from Step 2)
-    model_list = [
-        "gemini-3-pro-preview", "gemini-3-flash-preview", 
-        "gemini-2.5-pro", "gemini-2.5-flash",
-        "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"
-    ]
+    # Updated Model List (Standard 2025 Models)
+    model_list = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-pro-exp"]
     model_name = st.selectbox("MODEL_NAME", model_list)
-    
-    # 3. LANGUAGE SETTINGS
     source_lang = st.text_input("SOURCE_LANGUAGE", "English")
 
 with col2:
     target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
-    # 5. BATCH SIZE
     batch_sz = st.number_input("BATCH_SIZE", value=50, step=1)
 
-# 4. USER INSTRUCTION
 user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
 
-# --- 🚀 START BUTTON (Prominent on Main Page) ---
 start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
 
-# --- SUBTITLE PROCESSOR LOGIC ---
+# --- SUBTITLE PROCESSOR ---
 class SubtitleProcessor:
     def __init__(self, filename, content):
         self.ext = os.path.splitext(filename)[1].lower()
@@ -105,29 +94,24 @@ class SubtitleProcessor:
                 else: output += l + "\n"
         return output
 
-# --- EXECUTION LOGIC ---
+# --- EXECUTION ---
 if start_button:
     if not api_key or not uploaded_file:
-        st.error("❌ Please provide API Key AND Upload a file!")
+        st.error("❌ API Key aur File dono zaroori hain!")
     else:
         try:
             client = genai.Client(api_key=api_key)
             proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
             total_lines = proc.parse()
             
-            st.toast(f"✅ Parsed {total_lines} lines")
             trans_map = {}
             total_batches = math.ceil(total_lines / batch_sz)
             
             for i in range(0, total_lines, batch_sz):
                 current_batch_num = (i // batch_sz) + 1
                 chunk = proc.lines[i : i + batch_sz]
+                batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
                 
-                # Make Batch Text
-                batch_txt = ""
-                for x in chunk: batch_txt += f"[{x['id']}]\n{x['txt']}\n\n"
-                
-                # API Prompt
                 prompt = f"TASK: Translate from {source_lang} to {target_lang}\nNOTE: {user_instr}\n\nFORMAT:\n[ID]\nTranslated Text\n\nBatch:\n{batch_txt}"
                 
                 retry = 3
@@ -137,25 +121,27 @@ if start_button:
                         status_text.text(f"⏳ Processing Batch {current_batch_num}/{total_batches}")
                         resp = client.models.generate_content(model=model_name, contents=prompt)
                         
-                        # Extraction
                         matches = list(re.finditer(r'\[(\d+)\]\s*\n(.*?)(?=\n\[\d+\]|$)', resp.text, re.DOTALL))
                         if matches:
                             for m in matches: trans_map[m.group(1)] = m.group(2).strip()
                             success = True; break
-                        else: raise Exception("Format Error")
-                    except:
+                        else:
+                            st.warning(f"Batch {current_batch_num}: Format mismatch. Retrying...")
+                            retry -= 1
+                    except Exception as e:
+                        st.error(f"Batch {current_batch_num} Error: {str(e)}") # Ye line asli error batayegi
                         retry -= 1
                         time.sleep(2)
                 
                 progress_bar.progress(min((i + batch_sz) / total_lines, 1.0))
                 time.sleep(1)
 
-            st.success("🎉 Translation Complete!")
-            out_content = proc.get_output(trans_map)
-            # Download button appears on main page and sidebar after completion
-            st.download_button(label="⬇️ DOWNLOAD TRANSLATED FILE", data=out_content, file_name=f"translated_{uploaded_file.name}", use_container_width=True)
-            with st.sidebar:
-                st.download_button(label="⬇️ Download Again", data=out_content, file_name=f"translated_{uploaded_file.name}", use_container_width=True)
+            if trans_map:
+                st.success("🎉 Done!")
+                out_content = proc.get_output(trans_map)
+                st.download_button("⬇️ DOWNLOAD", data=out_content, file_name=f"translated_{uploaded_file.name}")
+            else:
+                st.error("❌ Translation failed. Check errors above.")
         
         except Exception as e:
-            st.error(f"❌ Error: {e}")
+            st.error(f"Fatal Error: {e}")
