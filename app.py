@@ -26,7 +26,6 @@ api_key = st.text_input("GOOGLE_API_KEY", type="password", help="Paste your Gemi
 
 col1, col2 = st.columns(2)
 with col1:
-    # 1. Default List
     default_models = [
         "gemini-2.0-flash",
         "gemini-1.5-flash", 
@@ -42,7 +41,7 @@ with col1:
 
     model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'])
 
-    # --- 🔄 FIXED FETCH BUTTON ---
+    # --- 🔄 FETCH BUTTON ---
     if st.button("🔄 Fetch Available Models from API"):
         if not api_key:
             st.error("⚠️ Pehle API Key daalein!")
@@ -172,12 +171,11 @@ if start_button:
                 file_status_ph.markdown(f"### 📂 Processing file {file_num} / {total_files_count}: **{uploaded_file.name}**")
                 
                 trans_map = {}
+                # Start with 0 progress visible
+                progress_text_ph.text(f"✅ Completed: 0 / {total_lines} Subtitles")
+                progress_bar.progress(0)
                 
                 for i in range(0, total_lines, batch_sz):
-                    # --- FIX START: Pehle sirf purana count dikhao (e.g. 0) ---
-                    progress_text_ph.text(f"File Progress: {i} / {total_lines} Subtitles")
-                    # ------------------------------------------------------------
-                    
                     current_batch_num = (i // batch_sz) + 1
                     chunk = proc.lines[i : i + batch_sz]
                     batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
@@ -198,7 +196,11 @@ Batch:
                     
                     while retry > 0:
                         try:
-                            console_box.markdown(f"**⏳ Batch {current_batch_num} Starting...**")
+                            # User ko batayein ke kahan kaam chal raha hai
+                            start_line = i + 1
+                            end_line = min(i + batch_sz, total_lines)
+                            console_box.markdown(f"**⏳ Processing Batch {current_batch_num} (Lines {start_line}-{end_line})...**")
+                            
                             response_stream = client.models.generate_content_stream(model=model_name, contents=prompt)
                             
                             full_batch_response = ""
@@ -218,17 +220,23 @@ Batch:
                             if matches:
                                 for m in matches: trans_map[m.group(1)] = m.group(2).strip()
                                 success = True; break
-                            else: retry -= 1; time.sleep(1)
+                            else: 
+                                console_box.warning(f"⚠️ Formatting Issue in Batch {current_batch_num}. Retrying...")
+                                retry -= 1
+                                time.sleep(1)
 
                         except Exception as e:
-                            st.error(f"Error: {e}")
-                            retry -= 1; time.sleep(2)
+                            console_box.error(f"Error: {e}. Retrying...")
+                            retry -= 1
+                            time.sleep(2)
                     
-                    # --- FIX END: Batch complete hone ke baad update karo ---
-                    new_progress = min(i + batch_sz, total_lines)
-                    progress_text_ph.text(f"File Progress: {new_progress} / {total_lines} Subtitles")
-                    progress_bar.progress(new_progress / total_lines)
-                    # --------------------------------------------------------
+                    # --- UPDATE PROGRESS ONLY AFTER SUCCESS ---
+                    if success:
+                        completed_count = min(i + batch_sz, total_lines)
+                        progress_text_ph.text(f"✅ Completed: {completed_count} / {total_lines} Subtitles")
+                        progress_bar.progress(completed_count / total_lines)
+                    else:
+                        st.error(f"❌ Batch {current_batch_num} Failed completely.")
                 
                 if trans_map:
                     out_content = proc.get_output(trans_map)
