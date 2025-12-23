@@ -3,13 +3,24 @@ import re
 import os
 import time
 import math
+import datetime
 from google import genai
-from google.genai import types # Import types for configuration
+from google.genai import types
 
 # Page Setup
 st.set_page_config(page_title="Gemini Subtitle Pro", layout="wide")
 
-# --- 📱 SIDEBAR (File Section) ---
+# --- 📦 SESSION STATE INITIALIZATION ---
+if 'api_keys' not in st.session_state:
+    st.session_state.api_keys = [] # List to store keys
+if 'active_key' not in st.session_state:
+    st.session_state.active_key = None
+if 'api_status' not in st.session_state:
+    st.session_state.api_status = "Unknown"
+if 'last_check' not in st.session_state:
+    st.session_state.last_check = "Never"
+
+# --- 📱 SIDEBAR ---
 with st.sidebar:
     st.header("📁 File Upload")
     uploaded_files = st.file_uploader(
@@ -20,11 +31,112 @@ with st.sidebar:
     st.markdown("---")
     st.info("💡 Tip: Upload multiple files to translate them one by one.")
 
-# --- 🖥️ MAIN INTERFACE (Settings) ---
+# --- 🖥️ MAIN INTERFACE ---
 st.title("✨ Gemini Subtitle Translator")
 
-api_key = st.text_input("GOOGLE_API_KEY", type="password", help="Paste your Gemini API Key")
+# --- ⚙️ FOLDABLE API CONFIGURATION MENU ---
+with st.expander("🛠️ API Configuration & Keys", expanded=False):
+    st.markdown("### Manage API Keys")
+    
+    # 1. Add New Key
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        new_key_input = st.text_input("Add New Gemini API Key", placeholder="Paste your key here", label_visibility="collapsed")
+    with c2:
+        if st.button("Add Key", use_container_width=True):
+            if new_key_input and new_key_input not in st.session_state.api_keys:
+                st.session_state.api_keys.append(new_key_input)
+                # Auto select first key
+                if not st.session_state.active_key:
+                    st.session_state.active_key = new_key_input
+                st.rerun()
 
+    # 2. List Saved Keys
+    st.markdown("#### Saved API Keys")
+    if not st.session_state.api_keys:
+        st.info("No keys saved. Add one above.")
+    else:
+        for idx, key in enumerate(st.session_state.api_keys):
+            # Mask the key for display (e.g., "Alza...QSAI")
+            masked_key = f"{key[:4]}...{key[-4:]}"
+            
+            # Layout for each key row
+            k_col1, k_col2, k_col3 = st.columns([0.1, 0.7, 0.2])
+            
+            is_active = (key == st.session_state.active_key)
+            
+            with k_col1:
+                # Green check if active
+                if is_active:
+                    st.markdown("✅")
+            with k_col2:
+                if st.button(f"{idx+1}. {masked_key}", key=f"sel_{idx}", use_container_width=True):
+                    st.session_state.active_key = key
+                    st.rerun()
+            with k_col3:
+                if st.button("Delete", key=f"del_{idx}", type="primary"):
+                    st.session_state.api_keys.pop(idx)
+                    if key == st.session_state.active_key:
+                        st.session_state.active_key = None
+                    st.rerun()
+
+    # 3. Status Checker
+    if st.session_state.active_key:
+        st.markdown("---")
+        col_stat1, col_stat2 = st.columns([3, 1])
+        with col_stat1:
+            st.write(f"**Status:** {st.session_state.api_status}")
+            st.caption(f"Last Checked: {st.session_state.last_check}")
+        with col_stat2:
+            if st.button("🔄 Check"):
+                try:
+                    client = genai.Client(api_key=st.session_state.active_key)
+                    # Simple call to list models to verify key
+                    list(client.models.list(config={'page_size': 1})) 
+                    st.session_state.api_status = "Alive 🟢"
+                    st.session_state.last_check = datetime.datetime.now().strftime("%I:%M:%S %p")
+                except Exception as e:
+                    st.session_state.api_status = "Dead 🔴"
+                st.rerun()
+
+    st.markdown("---")
+    
+    # 4. Advanced Settings (Screenshot matched)
+    show_keys = st.checkbox("Show API Keys (Unmask)")
+    if show_keys and st.session_state.active_key:
+        st.code(st.session_state.active_key, language="text")
+
+    enable_cooldown = st.checkbox("Enable API Cooldown (Prevents rate limits)", value=True)
+    
+    # Batch Size
+    batch_sz = st.number_input(
+        "Batch Size", 
+        min_value=1, max_value=200, value=20, step=1,
+        help="Smaller size (e.g., 20-40) can make API calls start faster if you experience long waits."
+    )
+    
+    # Temperature
+    temperature_val = st.number_input(
+        "Temperature", 
+        min_value=0.0, max_value=2.0, value=0.3, step=0.1,
+        help="Lower value (0.3) means more consistent translation."
+    )
+    
+    # Batch Delay
+    batch_delay_ms = st.number_input(
+        "Batch Delay (ms)", 
+        min_value=0, value=500, step=100,
+        help="Wait time between batches to avoid 429 Errors."
+    )
+    
+    # Max Tokens
+    max_tokens_val = st.number_input(
+        "Max Tokens", 
+        value=8192, step=1024,
+        help="Increase this (e.g., 8192 or 16000) if translations get cut off in the middle."
+    )
+
+# --- MAIN SETTINGS ---
 col1, col2 = st.columns(2)
 with col1:
     default_models = [
@@ -33,47 +145,41 @@ with col1:
         "gemini-1.5-pro",
         "gemini-2.5-flash"
     ]
-
     if 'model_list' not in st.session_state:
         st.session_state['model_list'] = default_models
 
     model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'])
-
-    # --- 🔄 FETCH BUTTON ---
+    
+    # Fetch Button Logic
     if st.button("🔄 Fetch Available Models"):
-        if not api_key:
-            st.error("⚠️ Pehle API Key daalein!")
+        if not st.session_state.active_key:
+            st.error("⚠️ Active API Key select karein configuration menu se!")
         else:
             try:
-                client = genai.Client(api_key=api_key)
+                client = genai.Client(api_key=st.session_state.active_key)
                 api_models = client.models.list()
-                
                 fetched_names = []
                 for m in api_models:
                     if hasattr(m, 'name') and 'gemini' in m.name.lower():
                         clean_name = m.name.replace("models/", "")
                         fetched_names.append(clean_name)
-                
                 if fetched_names:
                     updated_list = list(set(default_models + fetched_names))
                     updated_list.sort(reverse=True)
                     st.session_state['model_list'] = updated_list
-                    st.success(f"✅ Found {len(fetched_names)} models! List updated.")
+                    st.success(f"✅ Found {len(fetched_names)} models!")
                     time.sleep(1)
                     st.rerun()
-                else:
-                    st.warning("⚠️ No 'Gemini' models found via API.")
             except Exception as e:
-                st.error(f"❌ Fetch Error: {e}")
+                st.error(f"Error: {e}")
 
     source_lang = st.text_input("SOURCE_LANGUAGE", "English")
 
 with col2:
     target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
-    batch_sz = st.number_input("BATCH_SIZE", value=20, step=1)
+    st.info(f"⚙️ Using Batch Size: {batch_sz} | Delay: {batch_delay_ms}ms")
 
 user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
-
 start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
 
 # --- SUBTITLE PROCESSOR ---
@@ -136,13 +242,14 @@ class SubtitleProcessor:
 
 # --- EXECUTION ---
 if start_button:
-    if not api_key or not uploaded_files:
-        st.error("❌ API Key aur Files dono zaroori hain!")
+    if not st.session_state.active_key or not uploaded_files:
+        st.error("❌ Please Add & Select an API Key and Upload Files!")
     else:
         try:
-            client = genai.Client(api_key=api_key)
+            # Connect using Selected Key
+            client = genai.Client(api_key=st.session_state.active_key)
             
-            # --- STATUS DASHBOARD ---
+            # Dashboard
             st.markdown("## Translation Status")
             st.markdown("---")
             
@@ -158,10 +265,9 @@ if start_button:
             total_session_tokens = 0
             total_files_count = len(uploaded_files)
 
-            # --- FILE LOOP ---
+            # File Loop
             for file_idx, uploaded_file in enumerate(uploaded_files):
                 file_num = file_idx + 1
-                
                 proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
                 total_lines = proc.parse()
                 
@@ -176,19 +282,16 @@ if start_button:
                     chunk = proc.lines[i : i + batch_sz]
                     batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
                     
-                    # --- FIX 1: STRICTER PROMPT ---
+                    # --- SYSTEM PROMPT ---
                     prompt = f"""You are a translator.
 TASK: Translate {source_lang} to {target_lang}.
 NOTE: {user_instr}
-
 STRICT OUTPUT RULES:
 1. DO NOT use Code Blocks (```).
 2. DO NOT use Bolding (**).
-3. DO NOT include "Here is the translation" or any conversation.
-4. ONLY provide the format:
+3. ONLY provide the format:
 [ID]
 Translated Text
-
 Batch to translate:
 {batch_txt}"""
                     
@@ -202,11 +305,18 @@ Batch to translate:
                             end_line = min(i + batch_sz, total_lines)
                             console_box.markdown(f"**⏳ Processing Batch {current_batch_num} (Lines {start_line}-{end_line})...**")
                             
-                            # Config to reduce creativity (Parsing errors kam karne ke liye)
+                            # --- API CALL WITH NEW PARAMS ---
+                            # Adding Batch Delay if Cooldown Enabled
+                            if enable_cooldown and i > 0:
+                                time.sleep(batch_delay_ms / 1000.0)
+
                             response_stream = client.models.generate_content_stream(
                                 model=model_name, 
                                 contents=prompt,
-                                config=types.GenerateContentConfig(temperature=0.3)
+                                config=types.GenerateContentConfig(
+                                    temperature=temperature_val,
+                                    max_output_tokens=max_tokens_val
+                                )
                             )
                             
                             full_batch_response = ""
@@ -215,29 +325,23 @@ Batch to translate:
                                 if chunk_resp.text:
                                     full_batch_response += chunk_resp.text
                                     console_box.markdown(f"**Batch {current_batch_num} Translating...**\n\n```text\n{full_batch_response}\n```")
-                                
                                 if chunk_resp.usage_metadata:
                                     batch_tokens = chunk_resp.usage_metadata.total_token_count
 
                             total_session_tokens += batch_tokens
                             token_stats_ph.markdown(f"**Batch Tokens:** `{batch_tokens}` | **Total Tokens:** `{total_session_tokens}`")
 
-                            # --- FIX 2: AUTO CLEANER ---
-                            # Markdown aur extra spaces remove karo parsing se pehle
+                            # Cleaning & Parsing
                             clean_text = full_batch_response.replace("```", "").replace("**", "")
-                            
-                            # --- FIX 3: ROBUST REGEX (Handles Newlines AND Spaces) ---
-                            # Ye regex `[1] Text` aur `[1]\nText` dono ko accept karega
                             matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', clean_text, re.DOTALL))
                             
                             if matches and len(matches) > 0:
                                 for m in matches: trans_map[m.group(1)] = m.group(2).strip()
                                 success = True; break
                             else: 
-                                console_box.warning(f"⚠️ Parsing Issue in Batch {current_batch_num}. Cleaning and Retrying...")
+                                console_box.warning(f"⚠️ Parsing Issue. Retrying...")
                                 retry -= 1
                                 time.sleep(1)
-
                         except Exception as e:
                             console_box.error(f"Error: {e}. Retrying...")
                             retry -= 1
@@ -248,7 +352,7 @@ Batch to translate:
                         progress_text_ph.text(f"✅ Completed: {completed_count} / {total_lines} Subtitles")
                         progress_bar.progress(completed_count / total_lines)
                     else:
-                        st.error(f"❌ Batch {current_batch_num} Failed. Try reducing Batch Size.")
+                        st.error(f"❌ Batch {current_batch_num} Failed.")
                 
                 if trans_map:
                     out_content = proc.get_output(trans_map)
@@ -261,7 +365,7 @@ Batch to translate:
                     )
 
             st.balloons()
-            st.success("🎉 All Files Processed Successfully!")
+            st.success("🎉 All Files Processed!")
         
         except Exception as e:
             st.error(f"❌ Fatal Error: {e}")
