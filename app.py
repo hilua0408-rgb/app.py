@@ -13,34 +13,38 @@ with st.sidebar:
     st.header("📁 File Upload")
     uploaded_file = st.file_uploader("Upload Subtitle File (.srt, .vtt, .ass)", type=['srt', 'vtt', 'ass'])
     st.markdown("---")
-    progress_bar = st.progress(0)
     status_text = st.empty()
+    progress_bar = st.progress(0)
 
 # --- 🖥️ MAIN INTERFACE (Settings) ---
 st.title("✨ Gemini Subtitle Translator")
 
-api_key = st.text_input("GOOGLE_API_KEY", type="password")
+# API Key Main Page par
+api_key = st.text_input("GOOGLE_API_KEY", type="password", help="Paste your Gemini API Key")
 
 col1, col2 = st.columns(2)
 with col1:
-    # Saare models list mein mojood hain
     model_list = [
-        "gemini-3-pro-preview", "gemini-3-flash-preview", 
-        "gemini-2.5-pro", "gemini-2.5-flash",
-        "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"
+        "gemini-2.0-flash",
+        "gemini-1.5-flash", 
+        "gemini-1.5-pro",
+        "gemini-3-pro-preview", 
+        "gemini-3-flash-preview", 
+        "gemini-2.5-pro", 
+        "gemini-2.5-flash"
     ]
     model_name = st.selectbox("MODEL_NAME", model_list)
     source_lang = st.text_input("SOURCE_LANGUAGE", "English")
 
 with col2:
     target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
-    batch_sz = st.number_input("BATCH_SIZE", value=50, step=1)
+    batch_sz = st.number_input("BATCH_SIZE", value=20, step=1, help="Streaming ke liye chota batch size better hai (e.g., 20-30)")
 
 user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
 
 start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
 
-# --- SUBTITLE PROCESSOR (SRT, VTT, ASS) ---
+# --- SUBTITLE PROCESSOR ---
 class SubtitleProcessor:
     def __init__(self, filename, content):
         self.ext = os.path.splitext(filename)[1].lower()
@@ -75,7 +79,7 @@ class SubtitleProcessor:
 
     def ass(self):
         cnt = 1
-        for l in self.raw.strip().split('\n'):
+        for l in self.raw.split('\n'):
             if l.startswith("Dialogue:"):
                 p = l.split(',', 9)
                 if len(p) == 10: self.lines.append({'id': str(cnt), 'raw': l, 'txt': p[9].strip()}); cnt += 1
@@ -98,83 +102,85 @@ class SubtitleProcessor:
                 else: output += l + "\n"
         return output
 
-# --- EXECUTION LOGIC ---
+# --- EXECUTION ---
 if start_button:
     if not api_key or not uploaded_file:
-        st.error("❌ Please provide API Key and Upload a file!")
+        st.error("❌ API Key aur File dono zaroori hain!")
     else:
         try:
             client = genai.Client(api_key=api_key)
             proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
             total_lines = proc.parse()
             
-            st.markdown("### 📺 Terminal Stream (Auto-Scroll)")
-            st_stream_box = st.empty() 
-            
             trans_map = {}
             total_batches = math.ceil(total_lines / batch_sz)
+            
+            # Live Console Area
+            st.markdown("### 🔴 Live Translation Log")
+            console_box = st.empty() # Ye box har waqt update hoga
             
             for i in range(0, total_lines, batch_sz):
                 current_batch_num = (i // batch_sz) + 1
                 chunk = proc.lines[i : i + batch_sz]
                 batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
                 
-                # System Prompt with Strict Formatting
-                prompt = f"""You are a pro translator. 
-TASK: {source_lang} -> {target_lang}
-NOTE: {user_instr}
-FORMAT: [ID] then Translated Text. Stream the response.
+                # --- SYSTEM PROMPT ---
+                prompt = f"""You are a professional subtitle translation AI.
+TASK: Translate from {source_lang} to {target_lang}
+USER NOTE: {user_instr}
 
-Batch to process:
+FORMAT RULES:
+1. Format MUST be:
+   [ID]
+   Translated Text
+2. One empty line between blocks.
+3. No Markdown or original text.
+
+Batch:
 {batch_txt}"""
                 
                 retry = 3
                 success = False
+                
                 while retry > 0:
                     try:
                         status_text.text(f"⏳ Processing Batch {current_batch_num}/{total_batches}")
-                        final_text = "" # 5️⃣ Final Result Buffer
-
-                        # 2️⃣ Stream Loop (Chunk-by-chunk)
-                        # google-genai handles the reader and decoder internally
-                        for response_chunk in client.models.generate_content_stream(model=model_name, contents=prompt):
-                            # 4️⃣ JSON extract + text collect (Simplified for Python SDK)
-                            text = response_chunk.text
-                            if text:
-                                final_text += text
-                                # Smooth Auto-scroll UI
-                                html_stream = f"""
-                                <div id="log-box" style="height:400px; overflow-y:auto; background-color:#101418; color:#00e676; padding:15px; font-family:'Fira Code', monospace; border-radius:8px; border:1px solid #333; white-space:pre-wrap; font-size:13px; line-height:1.6;">
-                                    {final_text}<div id="end"></div>
-                                </div>
-                                <script>
-                                    var box = document.getElementById("log-box");
-                                    box.scrollTop = box.scrollHeight;
-                                </script>
-                                """
-                                st_stream_box.html(html_stream)
-
-                        # 3️⃣ Line-based parsing after full stream
-                        matches = list(re.finditer(r'\[(\d+)\]\s*\n(.*?)(?=\n\[\d+\]|$)', final_text, re.DOTALL))
+                        
+                        # STREAMING LOGIC ADDED HERE
+                        response_stream = client.models.generate_content_stream(model=model_name, contents=prompt)
+                        
+                        full_batch_response = ""
+                        
+                        # Ye loop word-by-word print karega
+                        for chunk_resp in response_stream:
+                            if chunk_resp.text:
+                                full_batch_response += chunk_resp.text
+                                # Real-time typing effect
+                                console_box.markdown(f"**Batch {current_batch_num} Translating...**\n\n```text\n{full_batch_response}\n```")
+                        
+                        # Parsing logic (jab batch complete ho jaye)
+                        matches = list(re.finditer(r'\[(\d+)\]\s*\n(.*?)(?=\n\[\d+\]|$)', full_batch_response, re.DOTALL))
                         if matches:
                             for m in matches: trans_map[m.group(1)] = m.group(2).strip()
                             success = True; break
                         else: 
-                            raise Exception("Incomplete JSON / Format Error")
+                            # Agar parsing fail ho, toh dobara try kare
+                            retry -= 1
+                            time.sleep(1)
 
                     except Exception as e:
-                        # ⚠️ Try/Catch for safety
-                        st.error(f"⚠️ Batch {current_batch_num} Failed: {e}")
+                        st.error(f"Error in Batch {current_batch_num}: {e}")
                         retry -= 1
                         time.sleep(2)
                 
                 progress_bar.progress(min((i + batch_sz) / total_lines, 1.0))
-                time.sleep(0.5)
-
+                
+            # Final Success
             if trans_map:
-                st.success("🎉 Translation Complete!")
+                console_box.empty() # Cleanup console
+                st.success("🎉 Translation Complete! Download below.")
                 out_content = proc.get_output(trans_map)
-                st.download_button("⬇️ DOWNLOAD FILE", data=out_content, file_name=f"translated_{uploaded_file.name}", use_container_width=True)
+                st.download_button("⬇️ DOWNLOAD TRANSLATED FILE", data=out_content, file_name=f"translated_{uploaded_file.name}")
         
         except Exception as e:
-            st.error(f"❌ Critical Error: {e}")
+            st.error(f"❌ Fatal Error: {e}")
