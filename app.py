@@ -32,7 +32,8 @@ with st.sidebar:
             st.rerun()
 
 # --- 🖥️ MAIN INTERFACE ---
-st.title("✨ Gemini Subtitle Translator")
+# Title ko chota kar diya (h3 size)
+st.markdown("### ✨ Gemini Subtitle Translator")
 
 # --- ⚙️ API CONFIGURATION ---
 with st.expander("🛠️ API Configuration & Keys", expanded=False):
@@ -111,7 +112,7 @@ with col2:
     target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
     batch_sz = st.number_input("BATCH_SIZE", 1, 500, 20)
 
-# --- FEATURES SECTION (MOVED UP) ---
+# --- FEATURES SECTION ---
 st.markdown("### ⚡ Features")
 
 f_col1, f_col2 = st.columns(2)
@@ -122,9 +123,10 @@ with f_col1:
         help="Remembers the last batch to maintain story continuity."
     )
 with f_col2:
+    # --- CHANGED: Default Value = False (Unticked) ---
     enable_analysis = st.checkbox(
         "🧐 Deep File Analysis", 
-        value=True, 
+        value=False, 
         help="Reads full file first to understand Context/Gender/Tone."
     )
 
@@ -138,7 +140,7 @@ if enable_analysis:
 else:
     analysis_instr = ""
 
-# --- USER INSTRUCTIONS (MOVED DOWN) ---
+# --- USER INSTRUCTIONS ---
 st.markdown("---")
 user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
 
