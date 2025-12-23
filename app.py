@@ -2,12 +2,11 @@ import streamlit as st
 import re
 import os
 import time
-import math
 from google import genai
 from google.genai import types
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro", layout="wide")
+st.set_page_config(page_title="Gemini Subtitle Pro V2", layout="wide")
 
 # --- 📦 SESSION STATE ---
 if 'api_keys' not in st.session_state: st.session_state.api_keys = []
@@ -32,7 +31,7 @@ with st.sidebar:
             st.rerun()
 
 # --- 🖥️ MAIN INTERFACE ---
-st.markdown("### ✨ Gemini Subtitle Translator")
+st.markdown("### ✨ Gemini Subtitle Translator & Polisher")
 
 # --- ⚙️ API CONFIGURATION ---
 with st.expander("🛠️ API Configuration & Keys", expanded=False):
@@ -75,7 +74,6 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
         with c_s2: 
             if st.button("Check Status", use_container_width=True):
                 try: 
-                    # --- FIX: Using 'with' block to keep client open ---
                     with genai.Client(api_key=st.session_state.active_key) as client:
                         list(client.models.list(config={'page_size': 1}))
                     st.session_state.api_status = "Alive 🟢"
@@ -100,7 +98,6 @@ with col1:
     if st.button("🔄 Fetch Models"):
         if st.session_state.active_key:
             try:
-                # --- FIX: Using 'with' block here too ---
                 with genai.Client(api_key=st.session_state.active_key) as client:
                     api_models = list(client.models.list())
                     
@@ -119,12 +116,12 @@ with col2:
 # --- FEATURES SECTION ---
 st.markdown("### ⚡ Features")
 
-f_col1, f_col2 = st.columns(2)
+f_col1, f_col2, f_col3 = st.columns(3)
 with f_col1:
     enable_memory = st.checkbox(
-        "🧠 Context Memory (Flow)", 
+        "🧠 Context Memory", 
         value=True, 
-        help="Remembers the last batch to maintain story continuity."
+        help="Maintains story continuity across batches."
     )
 with f_col2:
     enable_analysis = st.checkbox(
@@ -132,16 +129,30 @@ with f_col2:
         value=False, 
         help="Reads full file first to understand Context/Gender/Tone."
     )
+with f_col3:
+    enable_revision = st.checkbox(
+        "✨ Full File Revision",
+        value=False,
+        help="One-shot polish of the translated file to fix grammar/flow."
+    )
 
 # Analysis Instructions (Conditional)
+analysis_instr = ""
 if enable_analysis:
     analysis_instr = st.text_area(
-        "Analysis Note (Optional)", 
+        "Analysis Context Note", 
         placeholder="E.g. 'Keep tone formal', 'Main character is female'...",
         height=68
     )
-else:
-    analysis_instr = ""
+
+# Revision Instructions (Conditional)
+revision_instr = ""
+if enable_revision:
+    revision_instr = st.text_area(
+        "Revision Instructions",
+        placeholder="E.g. 'Fix grammar, make flow natural, check gender consistency'",
+        height=68
+    )
 
 # --- USER INSTRUCTIONS ---
 st.markdown("---")
@@ -206,7 +217,6 @@ if start_button:
         st.error("❌ Add API Key & Upload Files!")
     else:
         try:
-            # --- FIX: Using 'with' block for main translation client ---
             with genai.Client(api_key=st.session_state.active_key) as client:
                 st.markdown("## Translation Status")
                 st.markdown("---")
@@ -358,15 +368,86 @@ Translated Text
                             progress_bar.progress(fin / total_lines)
                         else:
                             st.error(f"❌ Batch {current_batch_num} FAILED.")
-                            st.markdown("### ⚠️ Choose Action:")
-                            c1, c2 = st.columns(2)
-                            with c1: 
-                                if st.button("🔄 Try Again", key=f"r_{file_idx}_{current_batch_num}", use_container_width=True): st.rerun()
-                            with c2: 
-                                if file_idx < len(uploaded_files)-1 and st.button("⏭️ Skip File", key=f"s_{file_idx}", use_container_width=True):
-                                    st.session_state.skipped_files.append(uploaded_file.name); st.rerun()
                             st.stop()
-                    
+
+                    # --- PHASE 3: REVISION (OPTIONAL) ---
+                    if enable_revision and trans_map:
+                        console_box.info("✨ Starting One-Shot Revision/Polish...")
+                        
+                        # Prepare Data: Sort by ID numeric
+                        sorted_ids = sorted(trans_map.keys(), key=lambda x: int(x) if x.isdigit() else x)
+                        full_draft_text = "\n\n".join([f"[{vid}]\n{trans_map[vid]}" for vid in sorted_ids])
+                        
+                        revision_prompt = f"""
+ROLE: Expert Editor & Proofreader & Fixer
+TASK: Polish the translated text for grammar, flow, and gender consistency.
+INPUT FORMAT: [ID] Text
+OUTPUT FORMAT: [ID] Fixed Text
+CRITICAL RULES:
+1. Keep the EXACT same number of lines.
+2. Do NOT merge lines.
+3. Output format must match: [ID] Your Fixed Text
+
+[ANALYSIS CONTEXT]:
+{file_context_summary}
+
+USER NOTES: "{revision_instr}"
+
+INPUT TEXT:
+{full_draft_text}
+"""
+                        revision_success = False
+                        rev_attempts = 0
+                        
+                        while not revision_success and rev_attempts < 2:
+                            try:
+                                rev_stream = client.models.generate_content_stream(
+                                    model=model_name,
+                                    contents=revision_prompt,
+                                    config=types.GenerateContentConfig(temperature=0.3)
+                                )
+                                
+                                full_rev_resp = ""
+                                for chunk in rev_stream:
+                                    if chunk.text:
+                                        full_rev_resp += chunk.text
+                                        console_box.markdown(f"**✨ Revising...**\n\n```text\n{full_rev_resp}\n```")
+                                
+                                # Update Map with Revised Text
+                                rev_clean = full_rev_resp.replace("```", "").replace("**", "")
+                                rev_matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', rev_clean, re.DOTALL))
+                                
+                                if rev_matches:
+                                    # Update logic
+                                    for m in rev_matches:
+                                        rid = m.group(1)
+                                        if rid in trans_map:
+                                            trans_map[rid] = m.group(2).strip()
+                                    revision_success = True
+                                    console_box.success("✅ Revision Applied Successfully!")
+                                else:
+                                    raise Exception("Revision output format invalid.")
+
+                            except Exception as e:
+                                console_box.error(f"⚠️ Revision Failed (Attempt {rev_attempts+1}): {e}")
+                                rev_attempts += 1
+                                time.sleep(2)
+                        
+                        if not revision_success:
+                            st.error("❌ Revision Failed. Saving ORIGINAL translated version.")
+                            # Show specific error UI
+                            st.warning("⚠️ The revision process encountered an error.")
+                            c_err1, c_err2 = st.columns(2)
+                            with c_err1:
+                                # Fallback download for un-revised content
+                                orig_out = proc.get_output(trans_map)
+                                st.download_button("💾 Save Original (Unrevised)", orig_out, f"ORIGINAL_{uploaded_file.name}")
+                            with c_err2:
+                                if st.button("🔄 Retry Revision"):
+                                    st.rerun()
+                            st.stop() # Stop further processing so user deals with error
+
+                    # --- FINAL OUTPUT GENERATION ---
                     if trans_map:
                         out = proc.get_output(trans_map)
                         st.success(f"✅ {uploaded_file.name} Done!")
