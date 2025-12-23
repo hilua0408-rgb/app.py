@@ -26,16 +26,53 @@ api_key = st.text_input("GOOGLE_API_KEY", type="password", help="Paste your Gemi
 
 col1, col2 = st.columns(2)
 with col1:
-    # --- MODEL LIST RESTORED & ORDERED ---
-    model_list = [
-        "gemini-2.0-flash-thinking-exp",
-        "gemini-2.0-pro-exp",
-        "gemini-2.0-flash-exp",
+    # 1. Aapki Hardcoded List (Default)
+    default_models = [
         "gemini-2.0-flash",
+        "gemini-1.5-flash", 
         "gemini-1.5-pro",
-        "gemini-1.5-flash"
+        "gemini-3-pro-preview", 
+        "gemini-3-flash-preview", 
+        "gemini-2.5-pro", 
+        "gemini-2.5-flash"
     ]
-    model_name = st.selectbox("MODEL_NAME", model_list)
+
+    # Session State me models store karenge taake refresh par update ho sake
+    if 'model_list' not in st.session_state:
+        st.session_state['model_list'] = default_models
+
+    # Model Select Box
+    model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'])
+
+    # --- 🔄 FETCH MODELS BUTTON ---
+    if st.button("🔄 Fetch Available Models from API"):
+        if not api_key:
+            st.error("⚠️ Pehle API Key daalein!")
+        else:
+            try:
+                client = genai.Client(api_key=api_key)
+                # Google API se models mangwana
+                api_models = client.models.list()
+                
+                fetched_names = []
+                for m in api_models:
+                    # Sirf wo models jo generateContent support karte hain
+                    if "generateContent" in m.supported_generation_methods:
+                        # "models/gemini-1.5-flash" -> "gemini-1.5-flash" (clean name)
+                        clean_name = m.name.replace("models/", "")
+                        fetched_names.append(clean_name)
+                
+                # Naye models ko purani list ke sath merge karna (duplicates hata kar)
+                updated_list = list(set(default_models + fetched_names))
+                updated_list.sort(reverse=True) # Sort Z-A (Latest first usually)
+                
+                st.session_state['model_list'] = updated_list
+                st.success(f"✅ Found {len(fetched_names)} models! List updated.")
+                time.sleep(1)
+                st.rerun() # Page refresh taake list update ho jaye
+            except Exception as e:
+                st.error(f"❌ Fetch Error: {e}")
+
     source_lang = st.text_input("SOURCE_LANGUAGE", "English")
 
 with col2:
