@@ -23,7 +23,7 @@ api_key = st.text_input("GOOGLE_API_KEY", type="password")
 
 col1, col2 = st.columns(2)
 with col1:
-    # Full list of requested models preserved
+    # Saare models list mein mojood hain
     model_list = [
         "gemini-3-pro-preview", "gemini-3-flash-preview", 
         "gemini-2.5-pro", "gemini-2.5-flash",
@@ -40,7 +40,7 @@ user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hind
 
 start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
 
-# --- SUBTITLE PROCESSOR ---
+# --- SUBTITLE PROCESSOR (SRT, VTT, ASS) ---
 class SubtitleProcessor:
     def __init__(self, filename, content):
         self.ext = os.path.splitext(filename)[1].lower()
@@ -75,7 +75,7 @@ class SubtitleProcessor:
 
     def ass(self):
         cnt = 1
-        for l in self.raw.split('\n'):
+        for l in self.raw.strip().split('\n'):
             if l.startswith("Dialogue:"):
                 p = l.split(',', 9)
                 if len(p) == 10: self.lines.append({'id': str(cnt), 'raw': l, 'txt': p[9].strip()}); cnt += 1
@@ -98,18 +98,17 @@ class SubtitleProcessor:
                 else: output += l + "\n"
         return output
 
-# --- EXECUTION ---
+# --- EXECUTION LOGIC ---
 if start_button:
     if not api_key or not uploaded_file:
-        st.error("❌ API Key aur File dono zaroori hain!")
+        st.error("❌ Please provide API Key and Upload a file!")
     else:
         try:
             client = genai.Client(api_key=api_key)
             proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
             total_lines = proc.parse()
             
-            # Streaming Container Header (Glitch Fix)
-            st.markdown("### 📺 Live Translation Stream")
+            st.markdown("### 📺 Terminal Stream (Auto-Scroll)")
             st_stream_box = st.empty() 
             
             trans_map = {}
@@ -120,47 +119,52 @@ if start_button:
                 chunk = proc.lines[i : i + batch_sz]
                 batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
                 
-                prompt = f"""You are a professional subtitle translator.
-TASK: Translate from {source_lang} to {target_lang}
-USER NOTE: {user_instr}
+                # System Prompt with Strict Formatting
+                prompt = f"""You are a pro translator. 
+TASK: {source_lang} -> {target_lang}
+NOTE: {user_instr}
+FORMAT: [ID] then Translated Text. Stream the response.
 
-FORMAT RULES:
-1. Return [ID] then Translated Text.
-2. Keep it line by line.
-
-Batch:
+Batch to process:
 {batch_txt}"""
                 
                 retry = 3
                 success = False
                 while retry > 0:
                     try:
-                        status_text.text(f"⏳ Batch {current_batch_num}/{total_batches}")
-                        full_response = ""
-                        
-                        # Streaming response loop
-                        for chunk_resp in client.models.generate_content_stream(model=model_name, contents=prompt):
-                            full_response += chunk_resp.text
-                            # Smooth Auto-scroll Component (ChatGPT style)
-                            html_content = f"""
-                            <div id="terminal" style="height:400px; overflow-y:auto; background-color:#0e1117; color:#00ff41; padding:20px; font-family:'Courier New', monospace; border-radius:10px; border:1px solid #333; white-space: pre-wrap; font-size:14px;">
-                                {full_response}<div id="anchor"></div>
-                            </div>
-                            <script>
-                                var objDiv = document.getElementById("terminal");
-                                objDiv.scrollTop = objDiv.scrollHeight;
-                            </script>
-                            """
-                            st_stream_box.html(html_content)
-                        
-                        # Extract data after stream completes
-                        matches = list(re.finditer(r'\[(\d+)\]\s*\n(.*?)(?=\n\[\d+\]|$)', full_response, re.DOTALL))
+                        status_text.text(f"⏳ Processing Batch {current_batch_num}/{total_batches}")
+                        final_text = "" # 5️⃣ Final Result Buffer
+
+                        # 2️⃣ Stream Loop (Chunk-by-chunk)
+                        # google-genai handles the reader and decoder internally
+                        for response_chunk in client.models.generate_content_stream(model=model_name, contents=prompt):
+                            # 4️⃣ JSON extract + text collect (Simplified for Python SDK)
+                            text = response_chunk.text
+                            if text:
+                                final_text += text
+                                # Smooth Auto-scroll UI
+                                html_stream = f"""
+                                <div id="log-box" style="height:400px; overflow-y:auto; background-color:#101418; color:#00e676; padding:15px; font-family:'Fira Code', monospace; border-radius:8px; border:1px solid #333; white-space:pre-wrap; font-size:13px; line-height:1.6;">
+                                    {final_text}<div id="end"></div>
+                                </div>
+                                <script>
+                                    var box = document.getElementById("log-box");
+                                    box.scrollTop = box.scrollHeight;
+                                </script>
+                                """
+                                st_stream_box.html(html_stream)
+
+                        # 3️⃣ Line-based parsing after full stream
+                        matches = list(re.finditer(r'\[(\d+)\]\s*\n(.*?)(?=\n\[\d+\]|$)', final_text, re.DOTALL))
                         if matches:
                             for m in matches: trans_map[m.group(1)] = m.group(2).strip()
                             success = True; break
-                        else: retry -= 1
+                        else: 
+                            raise Exception("Incomplete JSON / Format Error")
+
                     except Exception as e:
-                        st.error(f"Error in Batch {current_batch_num}: {e}")
+                        # ⚠️ Try/Catch for safety
+                        st.error(f"⚠️ Batch {current_batch_num} Failed: {e}")
                         retry -= 1
                         time.sleep(2)
                 
@@ -170,7 +174,7 @@ Batch:
             if trans_map:
                 st.success("🎉 Translation Complete!")
                 out_content = proc.get_output(trans_map)
-                st.download_button("⬇️ DOWNLOAD TRANSLATED FILE", data=out_content, file_name=f"translated_{uploaded_file.name}", use_container_width=True)
+                st.download_button("⬇️ DOWNLOAD FILE", data=out_content, file_name=f"translated_{uploaded_file.name}", use_container_width=True)
         
         except Exception as e:
-            st.error(f"❌ Fatal Error: {e}")
+            st.error(f"❌ Critical Error: {e}")
