@@ -42,10 +42,8 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
         new_key_input = st.text_input("Key Input", placeholder="Paste 'AIza...' key here", label_visibility="collapsed")
     with c2:
         if st.button("Add", use_container_width=True):
-            # Clean Input
             clean_key = new_key_input.strip()
-            
-            # Validation: Check length and 'AIza' (Capital i)
+            # Validation: Check length and 'AIza' (Capital i) or 'Alza' handling
             if len(clean_key) > 30 and (clean_key.startswith("AIza") or clean_key.startswith("Alza")): 
                 if clean_key not in st.session_state.api_keys:
                     st.session_state.api_keys.append(clean_key)
@@ -65,7 +63,6 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
             for idx, key in enumerate(st.session_state.api_keys):
                 masked_label = f"{key[:6]}...{key[-4:]}"
                 
-                # Layout: Key Name (Clickable) | Delete (Icon)
                 k_col1, k_col2 = st.columns([0.88, 0.12])
                 
                 with k_col1:
@@ -99,11 +96,19 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
                     st.session_state.api_status = "Dead 🔴"
                 st.rerun()
         
-        # Tech Settings (Removed Batch Size from here)
         with st.expander("⚙️ Advanced Tech Settings (Delay, Tokens)", expanded=False):
             enable_cooldown = st.checkbox("Enable Smart Cooldown (90s on 429 Error)", value=True)
             temperature_val = st.slider("Temperature", 0.0, 2.0, 0.3)
-            max_tokens_val = st.number_input("Max Tokens", 1000, 32000, 8192)
+            
+            # --- MAX TOKENS: UNLIMITED (No max_value set) ---
+            max_tokens_val = st.number_input(
+                "Max Output Tokens", 
+                min_value=100, 
+                value=8192, 
+                step=100,
+                help="Set as high as you want (depends on Model limit)."
+            )
+            
             batch_delay_ms = st.number_input("Normal Batch Delay (ms)", 0, 5000, 500)
     else:
         enable_cooldown = True
@@ -134,7 +139,6 @@ with col1:
 
 with col2:
     target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
-    # --- BATCH SIZE IS BACK HERE ---
     batch_sz = st.number_input("BATCH_SIZE", min_value=1, max_value=500, value=20, step=1, help="Number of subtitles to process at once.")
 
 user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
@@ -222,7 +226,6 @@ if start_button:
                 progress_text_ph.text(f"✅ Completed: 0 / {total_lines}")
                 progress_bar.progress(0)
                 
-                # Cooldown Counter
                 cooldown_hits = 0 
                 MAX_COOLDOWN_HITS = 3
                 
@@ -251,7 +254,6 @@ Batch:
                             end_line = min(i + batch_sz, total_lines)
                             console_box.markdown(f"**⏳ Batch {current_batch_num} ({start_line}-{end_line})...**")
                             
-                            # Normal Delay
                             if i > 0: time.sleep(batch_delay_ms / 1000.0)
 
                             response_stream = client.models.generate_content_stream(
@@ -280,20 +282,16 @@ Batch:
 
                         except Exception as e:
                             err_msg = str(e).lower()
-                            # --- 90s SMART COOLDOWN LOGIC ---
                             if ("429" in err_msg or "quota" in err_msg) and enable_cooldown:
                                 if cooldown_hits < MAX_COOLDOWN_HITS:
-                                    console_box.error(f"🛑 Rate Limit Hit! Waiting 90s to Auto-Resume... ({cooldown_hits+1}/{MAX_COOLDOWN_HITS})")
-                                    # Countdown UI
+                                    console_box.error(f"🛑 Rate Limit Hit! Waiting 90s... ({cooldown_hits+1}/{MAX_COOLDOWN_HITS})")
                                     wait_bar = st.progress(0)
                                     for sec in range(90):
                                         time.sleep(1)
                                         wait_bar.progress((sec+1)/90)
                                     wait_bar.empty()
-                                    
                                     cooldown_hits += 1
                                     console_box.info("♻️ Resuming Batch...")
-                                    # continue se loop wapas start hoga usi batch ke liye
                                     continue 
                                 else:
                                     console_box.error("❌ Max Cooldowns reached. Stopping.")
