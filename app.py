@@ -4,6 +4,7 @@ import os
 import time
 import math
 from google import genai
+from google.genai import types # Import types for configuration
 
 # Page Setup
 st.set_page_config(page_title="Gemini Subtitle Pro", layout="wide")
@@ -30,9 +31,6 @@ with col1:
         "gemini-2.0-flash",
         "gemini-1.5-flash", 
         "gemini-1.5-pro",
-        "gemini-3-pro-preview", 
-        "gemini-3-flash-preview", 
-        "gemini-2.5-pro", 
         "gemini-2.5-flash"
     ]
 
@@ -42,7 +40,7 @@ with col1:
     model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'])
 
     # --- 🔄 FETCH BUTTON ---
-    if st.button("🔄 Fetch Available Models from API"):
+    if st.button("🔄 Fetch Available Models"):
         if not api_key:
             st.error("⚠️ Pehle API Key daalein!")
         else:
@@ -65,7 +63,6 @@ with col1:
                     st.rerun()
                 else:
                     st.warning("⚠️ No 'Gemini' models found via API.")
-                    
             except Exception as e:
                 st.error(f"❌ Fetch Error: {e}")
 
@@ -171,7 +168,6 @@ if start_button:
                 file_status_ph.markdown(f"### 📂 Processing file {file_num} / {total_files_count}: **{uploaded_file.name}**")
                 
                 trans_map = {}
-                # Start with 0 progress visible
                 progress_text_ph.text(f"✅ Completed: 0 / {total_lines} Subtitles")
                 progress_bar.progress(0)
                 
@@ -180,14 +176,20 @@ if start_button:
                     chunk = proc.lines[i : i + batch_sz]
                     batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
                     
-                    prompt = f"""You are a professional subtitle translation AI.
-TASK: Translate from {source_lang} to {target_lang}
-USER NOTE: {user_instr}
-FORMAT RULES:
-1. Format MUST be: [ID] Translated Text
-2. One empty line between blocks.
-3. No Markdown.
-Batch:
+                    # --- FIX 1: STRICTER PROMPT ---
+                    prompt = f"""You are a translator.
+TASK: Translate {source_lang} to {target_lang}.
+NOTE: {user_instr}
+
+STRICT OUTPUT RULES:
+1. DO NOT use Code Blocks (```).
+2. DO NOT use Bolding (**).
+3. DO NOT include "Here is the translation" or any conversation.
+4. ONLY provide the format:
+[ID]
+Translated Text
+
+Batch to translate:
 {batch_txt}"""
                     
                     retry = 3
@@ -196,12 +198,16 @@ Batch:
                     
                     while retry > 0:
                         try:
-                            # User ko batayein ke kahan kaam chal raha hai
                             start_line = i + 1
                             end_line = min(i + batch_sz, total_lines)
                             console_box.markdown(f"**⏳ Processing Batch {current_batch_num} (Lines {start_line}-{end_line})...**")
                             
-                            response_stream = client.models.generate_content_stream(model=model_name, contents=prompt)
+                            # Config to reduce creativity (Parsing errors kam karne ke liye)
+                            response_stream = client.models.generate_content_stream(
+                                model=model_name, 
+                                contents=prompt,
+                                config=types.GenerateContentConfig(temperature=0.3)
+                            )
                             
                             full_batch_response = ""
                             
@@ -216,12 +222,19 @@ Batch:
                             total_session_tokens += batch_tokens
                             token_stats_ph.markdown(f"**Batch Tokens:** `{batch_tokens}` | **Total Tokens:** `{total_session_tokens}`")
 
-                            matches = list(re.finditer(r'\[(\d+)\]\s*\n(.*?)(?=\n\[\d+\]|$)', full_batch_response, re.DOTALL))
-                            if matches:
+                            # --- FIX 2: AUTO CLEANER ---
+                            # Markdown aur extra spaces remove karo parsing se pehle
+                            clean_text = full_batch_response.replace("```", "").replace("**", "")
+                            
+                            # --- FIX 3: ROBUST REGEX (Handles Newlines AND Spaces) ---
+                            # Ye regex `[1] Text` aur `[1]\nText` dono ko accept karega
+                            matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', clean_text, re.DOTALL))
+                            
+                            if matches and len(matches) > 0:
                                 for m in matches: trans_map[m.group(1)] = m.group(2).strip()
                                 success = True; break
                             else: 
-                                console_box.warning(f"⚠️ Formatting Issue in Batch {current_batch_num}. Retrying...")
+                                console_box.warning(f"⚠️ Parsing Issue in Batch {current_batch_num}. Cleaning and Retrying...")
                                 retry -= 1
                                 time.sleep(1)
 
@@ -230,13 +243,12 @@ Batch:
                             retry -= 1
                             time.sleep(2)
                     
-                    # --- UPDATE PROGRESS ONLY AFTER SUCCESS ---
                     if success:
                         completed_count = min(i + batch_sz, total_lines)
                         progress_text_ph.text(f"✅ Completed: {completed_count} / {total_lines} Subtitles")
                         progress_bar.progress(completed_count / total_lines)
                     else:
-                        st.error(f"❌ Batch {current_batch_num} Failed completely.")
+                        st.error(f"❌ Batch {current_batch_num} Failed. Try reducing Batch Size.")
                 
                 if trans_map:
                     out_content = proc.get_output(trans_map)
