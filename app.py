@@ -53,16 +53,13 @@ with col1:
                 
                 fetched_names = []
                 for m in api_models:
-                    # Fix: supported_generation_methods check hata diya (causing error)
-                    # Sirf Naam check karenge
                     if hasattr(m, 'name') and 'gemini' in m.name.lower():
                         clean_name = m.name.replace("models/", "")
                         fetched_names.append(clean_name)
                 
                 if fetched_names:
-                    # Merge and Sort
                     updated_list = list(set(default_models + fetched_names))
-                    updated_list.sort(reverse=True) # Newest first
+                    updated_list.sort(reverse=True)
                     st.session_state['model_list'] = updated_list
                     st.success(f"✅ Found {len(fetched_names)} models! List updated.")
                     time.sleep(1)
@@ -175,14 +172,15 @@ if start_button:
                 file_status_ph.markdown(f"### 📂 Processing file {file_num} / {total_files_count}: **{uploaded_file.name}**")
                 
                 trans_map = {}
-                total_batches = math.ceil(total_lines / batch_sz)
                 
                 for i in range(0, total_lines, batch_sz):
+                    # --- FIX START: Pehle sirf purana count dikhao (e.g. 0) ---
+                    progress_text_ph.text(f"File Progress: {i} / {total_lines} Subtitles")
+                    # ------------------------------------------------------------
+                    
                     current_batch_num = (i // batch_sz) + 1
                     chunk = proc.lines[i : i + batch_sz]
                     batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
-                    
-                    progress_text_ph.text(f"File Progress: {min(i + batch_sz, total_lines)} / {total_lines} Subtitles")
                     
                     prompt = f"""You are a professional subtitle translation AI.
 TASK: Translate from {source_lang} to {target_lang}
@@ -226,7 +224,11 @@ Batch:
                             st.error(f"Error: {e}")
                             retry -= 1; time.sleep(2)
                     
-                    progress_bar.progress(min((i + batch_sz) / total_lines, 1.0))
+                    # --- FIX END: Batch complete hone ke baad update karo ---
+                    new_progress = min(i + batch_sz, total_lines)
+                    progress_text_ph.text(f"File Progress: {new_progress} / {total_lines} Subtitles")
+                    progress_bar.progress(new_progress / total_lines)
+                    # --------------------------------------------------------
                 
                 if trans_map:
                     out_content = proc.get_output(trans_map)
