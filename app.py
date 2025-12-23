@@ -115,9 +115,12 @@ if start_button:
             trans_map = {}
             total_batches = math.ceil(total_lines / batch_sz)
             
-            # Live Console Area
+            # --- CHANGE: FIXED HEIGHT CONTAINER ---
             st.markdown("### 🔴 Live Translation Log")
-            console_box = st.empty() # Ye box har waqt update hoga
+            
+            # height=300 pixels (Approx 2-3 fingers height on screen)
+            with st.container(height=300, border=True):
+                console_box = st.empty() 
             
             for i in range(0, total_lines, batch_sz):
                 current_batch_num = (i // batch_sz) + 1
@@ -146,25 +149,22 @@ Batch:
                     try:
                         status_text.text(f"⏳ Processing Batch {current_batch_num}/{total_batches}")
                         
-                        # STREAMING LOGIC ADDED HERE
+                        # STREAMING LOGIC
                         response_stream = client.models.generate_content_stream(model=model_name, contents=prompt)
                         
                         full_batch_response = ""
                         
-                        # Ye loop word-by-word print karega
                         for chunk_resp in response_stream:
                             if chunk_resp.text:
                                 full_batch_response += chunk_resp.text
-                                # Real-time typing effect
+                                # Console box ab container ke andar update hoga
                                 console_box.markdown(f"**Batch {current_batch_num} Translating...**\n\n```text\n{full_batch_response}\n```")
                         
-                        # Parsing logic (jab batch complete ho jaye)
                         matches = list(re.finditer(r'\[(\d+)\]\s*\n(.*?)(?=\n\[\d+\]|$)', full_batch_response, re.DOTALL))
                         if matches:
                             for m in matches: trans_map[m.group(1)] = m.group(2).strip()
                             success = True; break
                         else: 
-                            # Agar parsing fail ho, toh dobara try kare
                             retry -= 1
                             time.sleep(1)
 
@@ -175,10 +175,9 @@ Batch:
                 
                 progress_bar.progress(min((i + batch_sz) / total_lines, 1.0))
                 
-            # Final Success
             if trans_map:
-                console_box.empty() # Cleanup console
-                st.success("🎉 Translation Complete! Download below.")
+                console_box.empty()
+                console_box.success("🎉 Translation Complete! Download below.")
                 out_content = proc.get_output(trans_map)
                 st.download_button("⬇️ DOWNLOAD TRANSLATED FILE", data=out_content, file_name=f"translated_{uploaded_file.name}")
         
