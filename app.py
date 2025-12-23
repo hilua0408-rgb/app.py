@@ -23,6 +23,7 @@ api_key = st.text_input("GOOGLE_API_KEY", type="password")
 
 col1, col2 = st.columns(2)
 with col1:
+    # Full list of requested models
     model_list = [
         "gemini-3-pro-preview", "gemini-3-flash-preview", 
         "gemini-2.5-pro", "gemini-2.5-flash",
@@ -107,7 +108,7 @@ if start_button:
             proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
             total_lines = proc.parse()
             
-            # Streaming Box only shows up here after clicking Start
+            # Live Stream Header
             st.subheader("📺 Live Translation Stream")
             st_stream_box = st.empty() 
             
@@ -123,9 +124,9 @@ if start_button:
 TASK: Translate from {source_lang} to {target_lang}
 USER NOTE: {user_instr}
 
-FORMAT:
-[ID]
-Translated Text
+CRITICAL RULES:
+1. Format: [ID] then Translated Text.
+2. MUST use streaming to show results line by line.
 
 Batch:
 {batch_txt}"""
@@ -137,13 +138,22 @@ Batch:
                         status_text.text(f"⏳ Batch {current_batch_num}/{total_batches}")
                         full_response = ""
                         
-                        # Streaming response
+                        # Streaming response loop
                         for chunk_resp in client.models.generate_content_stream(model=model_name, contents=prompt):
                             full_response += chunk_resp.text
-                            # Update the live stream box letter by letter
-                            st_stream_box.text_area("Streaming Batch Content:", value=full_response, height=250)
+                            # Auto-scroll HTML/JS component
+                            html_stream = f"""
+                            <div id="scroll-container" style="height:350px; overflow-y:auto; background-color:#1a1c24; color:#ffffff; padding:15px; font-family:monospace; border-radius:10px; border:1px solid #444; white-space: pre-wrap; font-size:14px; line-height:1.5;">
+                                {full_response}
+                            </div>
+                            <script>
+                                var element = document.getElementById("scroll-container");
+                                element.scrollTop = element.scrollHeight;
+                            </script>
+                            """
+                            st_stream_box.html(html_stream)
                         
-                        # Extraction after full stream
+                        # Extract data after stream completes
                         matches = list(re.finditer(r'\[(\d+)\]\s*\n(.*?)(?=\n\[\d+\]|$)', full_response, re.DOTALL))
                         if matches:
                             for m in matches: trans_map[m.group(1)] = m.group(2).strip()
