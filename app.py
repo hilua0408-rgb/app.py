@@ -111,34 +111,36 @@ with col2:
     target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
     batch_sz = st.number_input("BATCH_SIZE", 1, 500, 20)
 
-user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
-
-# --- FEATURES SECTION ---
+# --- FEATURES SECTION (MOVED UP) ---
 st.markdown("### ⚡ Features")
 
-# 1. Context Memory (Default Ticked)
-enable_memory = st.checkbox(
-    "🧠 Enable Context Memory (Maintains Flow)", 
-    value=True, 
-    help="Passes the last translated batch to the AI so it remembers the story flow."
-)
+f_col1, f_col2 = st.columns(2)
+with f_col1:
+    enable_memory = st.checkbox(
+        "🧠 Context Memory (Flow)", 
+        value=True, 
+        help="Remembers the last batch to maintain story continuity."
+    )
+with f_col2:
+    enable_analysis = st.checkbox(
+        "🧐 Deep File Analysis", 
+        value=True, 
+        help="Reads full file first to understand Context/Gender/Tone."
+    )
 
-# 2. Deep Analysis (Toggle Box)
-enable_analysis = st.checkbox(
-    "🧐 Enable Deep File Analysis (Context Awareness)", 
-    value=True, 
-    help="AI will read the full file first to understand Story, Gender & Tone."
-)
-
-# 3. Conditional Text Area for Analysis
+# Analysis Instructions (Conditional)
 if enable_analysis:
     analysis_instr = st.text_area(
-        "Analysis Instructions (Optional)", 
-        placeholder="It's optional! You can type how you want your summary or note anything specific for the AI to focus on (e.g., 'Focus on formal tone')...",
-        height=100
+        "Analysis Note (Optional)", 
+        placeholder="E.g. 'Keep tone formal', 'Main character is female'...",
+        height=68
     )
 else:
     analysis_instr = ""
+
+# --- USER INSTRUCTIONS (MOVED DOWN) ---
+st.markdown("---")
+user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
 
 start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
 
@@ -228,7 +230,6 @@ if start_button:
                 if enable_analysis:
                     try:
                         console_box.info("🧠 Analyzing the full file context... Please wait.")
-                        
                         full_script = "\n".join([f"{x['id']}: {x['txt']}" for x in proc.lines])
                         
                         analysis_system_prompt = f"""
@@ -272,7 +273,6 @@ INPUT TEXT:
                 progress_bar.progress(0)
                 cooldown_hits = 0; MAX_COOLDOWN_HITS = 3
                 
-                # Context Memory Storage
                 previous_batch_context = ""
 
                 for i in range(0, total_lines, batch_sz):
@@ -280,16 +280,9 @@ INPUT TEXT:
                     chunk = proc.lines[i : i + batch_sz]
                     batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
                     
-                    # --- PROMPT CONSTRUCTION ---
-                    
-                    # 1. Add Previous Context if Enabled
                     memory_block = ""
                     if enable_memory and previous_batch_context:
-                        memory_block = f"""
-[PREVIOUS TRANSLATED BATCH - FOR FLOW]:
-{previous_batch_context}
-(Continue the story smoothly from here)
-"""
+                        memory_block = f"\n[PREVIOUS TRANSLATED BATCH - FOR FLOW]:\n{previous_batch_context}\n(Continue the story smoothly from here)\n"
 
                     prompt = f"""You are a professional translator.
 TASK: Translate {source_lang} to {target_lang}.
@@ -338,12 +331,7 @@ Translated Text
                             
                             if matches:
                                 for m in matches: trans_map[m.group(1)] = m.group(2).strip()
-                                
-                                # --- UPDATE MEMORY ---
-                                if enable_memory:
-                                    # Store last 500 chars of this batch to guide the next one
-                                    previous_batch_context = clean_text[-1000:] 
-                                
+                                if enable_memory: previous_batch_context = clean_text[-1000:] 
                                 success = True; break
                             else: console_box.warning("⚠️ Formatting Error. Retrying..."); retry -= 1; time.sleep(1)
 
