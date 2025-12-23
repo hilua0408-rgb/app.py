@@ -12,13 +12,11 @@ st.set_page_config(page_title="Gemini Subtitle Pro", layout="wide")
 
 # --- 📦 SESSION STATE INITIALIZATION ---
 if 'api_keys' not in st.session_state:
-    st.session_state.api_keys = [] # List to store keys
+    st.session_state.api_keys = []
 if 'active_key' not in st.session_state:
     st.session_state.active_key = None
 if 'api_status' not in st.session_state:
     st.session_state.api_status = "Unknown"
-if 'last_check' not in st.session_state:
-    st.session_state.last_check = "Never"
 
 # --- 📱 SIDEBAR ---
 with st.sidebar:
@@ -34,107 +32,90 @@ with st.sidebar:
 # --- 🖥️ MAIN INTERFACE ---
 st.title("✨ Gemini Subtitle Translator")
 
-# --- ⚙️ FOLDABLE API CONFIGURATION MENU ---
+# --- ⚙️ FOLDABLE API CONFIGURATION MENU (UPDATED UI) ---
 with st.expander("🛠️ API Configuration & Keys", expanded=False):
-    st.markdown("### Manage API Keys")
     
-    # 1. Add New Key
-    c1, c2 = st.columns([3, 1])
+    # 1. Add New Key Section (Compact)
+    st.markdown("### ➕ Add New API Key")
+    c1, c2 = st.columns([0.8, 0.2])
     with c1:
-        new_key_input = st.text_input("Add New Gemini API Key", placeholder="Paste your key here", label_visibility="collapsed")
+        new_key_input = st.text_input("Enter Gemini API Key", placeholder="Paste key here...", label_visibility="collapsed")
     with c2:
-        if st.button("Add Key", use_container_width=True):
+        if st.button("Add", use_container_width=True):
             if new_key_input and new_key_input not in st.session_state.api_keys:
                 st.session_state.api_keys.append(new_key_input)
-                # Auto select first key
                 if not st.session_state.active_key:
                     st.session_state.active_key = new_key_input
                 st.rerun()
 
-    # 2. List Saved Keys
-    st.markdown("#### Saved API Keys")
-    if not st.session_state.api_keys:
-        st.info("No keys saved. Add one above.")
-    else:
-        for idx, key in enumerate(st.session_state.api_keys):
-            # Mask the key for display (e.g., "Alza...QSAI")
-            masked_key = f"{key[:4]}...{key[-4:]}"
-            
-            # Layout for each key row
-            k_col1, k_col2, k_col3 = st.columns([0.1, 0.7, 0.2])
-            
-            is_active = (key == st.session_state.active_key)
-            
-            with k_col1:
-                # Green check if active
-                if is_active:
-                    st.markdown("✅")
-            with k_col2:
-                if st.button(f"{idx+1}. {masked_key}", key=f"sel_{idx}", use_container_width=True):
-                    st.session_state.active_key = key
-                    st.rerun()
-            with k_col3:
-                if st.button("Delete", key=f"del_{idx}", type="primary"):
-                    st.session_state.api_keys.pop(idx)
-                    if key == st.session_state.active_key:
-                        st.session_state.active_key = None
-                    st.rerun()
+    # 2. SCROLLABLE KEY MANAGER BOX
+    st.markdown("### 🔑 Saved Keys (Tap to Select)")
+    
+    # Ye hai wo SCROLLABLE BOX (Height fixed hai, content zyada hoga to scroll hoga)
+    with st.container(height=200, border=True):
+        if not st.session_state.api_keys:
+            st.caption("No keys saved yet. Add one above.")
+        else:
+            for idx, key in enumerate(st.session_state.api_keys):
+                # Mask Key (Show only first 8 chars)
+                masked_label = f"🔑 {key[:8]}............{key[-4:]}"
+                
+                # Check if this key is ACTIVE
+                if key == st.session_state.active_key:
+                    # ACTIVE KEY DESIGN (Green Highlight)
+                    col_txt, col_del = st.columns([0.85, 0.15])
+                    with col_txt:
+                        st.success(f"✅ Active: {masked_label}")
+                    with col_del:
+                        if st.button("🗑️", key=f"del_{idx}", help="Delete Key"):
+                            st.session_state.api_keys.pop(idx)
+                            if st.session_state.active_key == key:
+                                st.session_state.active_key = None
+                            st.rerun()
+                else:
+                    # INACTIVE KEY DESIGN (Click button to select)
+                    col_btn, col_del = st.columns([0.85, 0.15])
+                    with col_btn:
+                        # Pura button click karne par select ho jayega
+                        if st.button(masked_label, key=f"sel_{idx}", use_container_width=True):
+                            st.session_state.active_key = key
+                            st.rerun()
+                    with col_del:
+                        if st.button("❌", key=f"del_{idx}"):
+                            st.session_state.api_keys.pop(idx)
+                            st.rerun()
 
-    # 3. Status Checker
+    # 3. Status & Config
     if st.session_state.active_key:
         st.markdown("---")
-        col_stat1, col_stat2 = st.columns([3, 1])
-        with col_stat1:
-            st.write(f"**Status:** {st.session_state.api_status}")
-            st.caption(f"Last Checked: {st.session_state.last_check}")
-        with col_stat2:
-            if st.button("🔄 Check"):
+        # Status Check
+        col_s1, col_s2 = st.columns([0.7, 0.3])
+        with col_s1:
+            st.write(f"**Current Status:** {st.session_state.api_status}")
+        with col_s2:
+            if st.button("🔄 Check Status", use_container_width=True):
                 try:
                     client = genai.Client(api_key=st.session_state.active_key)
-                    # Simple call to list models to verify key
-                    list(client.models.list(config={'page_size': 1})) 
-                    st.session_state.api_status = "Alive 🟢"
-                    st.session_state.last_check = datetime.datetime.now().strftime("%I:%M:%S %p")
-                except Exception as e:
-                    st.session_state.api_status = "Dead 🔴"
+                    list(client.models.list(config={'page_size': 1}))
+                    st.session_state.api_status = "🟢 Online"
+                except:
+                    st.session_state.api_status = "🔴 Offline / Invalid"
                 st.rerun()
-
-    st.markdown("---")
-    
-    # 4. Advanced Settings (Screenshot matched)
-    show_keys = st.checkbox("Show API Keys (Unmask)")
-    if show_keys and st.session_state.active_key:
-        st.code(st.session_state.active_key, language="text")
-
-    enable_cooldown = st.checkbox("Enable API Cooldown (Prevents rate limits)", value=True)
-    
-    # Batch Size
-    batch_sz = st.number_input(
-        "Batch Size", 
-        min_value=1, max_value=200, value=20, step=1,
-        help="Smaller size (e.g., 20-40) can make API calls start faster if you experience long waits."
-    )
-    
-    # Temperature
-    temperature_val = st.number_input(
-        "Temperature", 
-        min_value=0.0, max_value=2.0, value=0.3, step=0.1,
-        help="Lower value (0.3) means more consistent translation."
-    )
-    
-    # Batch Delay
-    batch_delay_ms = st.number_input(
-        "Batch Delay (ms)", 
-        min_value=0, value=500, step=100,
-        help="Wait time between batches to avoid 429 Errors."
-    )
-    
-    # Max Tokens
-    max_tokens_val = st.number_input(
-        "Max Tokens", 
-        value=8192, step=1024,
-        help="Increase this (e.g., 8192 or 16000) if translations get cut off in the middle."
-    )
+        
+        # Advanced Settings Toggle
+        with st.expander("⚙️ Advanced Settings (Batch, Temperature)", expanded=False):
+            enable_cooldown = st.checkbox("Enable API Cooldown", value=True)
+            batch_sz = st.number_input("Batch Size", 1, 500, 20)
+            temperature_val = st.slider("Temperature", 0.0, 2.0, 0.3)
+            max_tokens_val = st.number_input("Max Tokens", 1000, 32000, 8192)
+            batch_delay_ms = st.number_input("Delay (ms)", 0, 5000, 500)
+    else:
+        # Default values agar key na ho
+        enable_cooldown = True
+        batch_sz = 20
+        temperature_val = 0.3
+        max_tokens_val = 8192
+        batch_delay_ms = 500
 
 # --- MAIN SETTINGS ---
 col1, col2 = st.columns(2)
@@ -150,34 +131,29 @@ with col1:
 
     model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'])
     
-    # Fetch Button Logic
     if st.button("🔄 Fetch Available Models"):
-        if not st.session_state.active_key:
-            st.error("⚠️ Active API Key select karein configuration menu se!")
-        else:
+        if st.session_state.active_key:
             try:
                 client = genai.Client(api_key=st.session_state.active_key)
                 api_models = client.models.list()
                 fetched_names = []
                 for m in api_models:
                     if hasattr(m, 'name') and 'gemini' in m.name.lower():
-                        clean_name = m.name.replace("models/", "")
-                        fetched_names.append(clean_name)
+                        fetched_names.append(m.name.replace("models/", ""))
                 if fetched_names:
                     updated_list = list(set(default_models + fetched_names))
                     updated_list.sort(reverse=True)
                     st.session_state['model_list'] = updated_list
                     st.success(f"✅ Found {len(fetched_names)} models!")
-                    time.sleep(1)
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
+                    time.sleep(1); st.rerun()
+            except Exception as e: st.error(f"Error: {e}")
+        else: st.error("Select an API Key first!")
 
     source_lang = st.text_input("SOURCE_LANGUAGE", "English")
 
 with col2:
     target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
-    st.info(f"⚙️ Using Batch Size: {batch_sz} | Delay: {batch_delay_ms}ms")
+    st.caption(f"Settings: Batch {batch_sz} | Delay {batch_delay_ms}ms")
 
 user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
 start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
@@ -246,10 +222,8 @@ if start_button:
         st.error("❌ Please Add & Select an API Key and Upload Files!")
     else:
         try:
-            # Connect using Selected Key
             client = genai.Client(api_key=st.session_state.active_key)
             
-            # Dashboard
             st.markdown("## Translation Status")
             st.markdown("---")
             
@@ -265,7 +239,6 @@ if start_button:
             total_session_tokens = 0
             total_files_count = len(uploaded_files)
 
-            # File Loop
             for file_idx, uploaded_file in enumerate(uploaded_files):
                 file_num = file_idx + 1
                 proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
@@ -282,7 +255,6 @@ if start_button:
                     chunk = proc.lines[i : i + batch_sz]
                     batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
                     
-                    # --- SYSTEM PROMPT ---
                     prompt = f"""You are a translator.
 TASK: Translate {source_lang} to {target_lang}.
 NOTE: {user_instr}
@@ -305,8 +277,6 @@ Batch to translate:
                             end_line = min(i + batch_sz, total_lines)
                             console_box.markdown(f"**⏳ Processing Batch {current_batch_num} (Lines {start_line}-{end_line})...**")
                             
-                            # --- API CALL WITH NEW PARAMS ---
-                            # Adding Batch Delay if Cooldown Enabled
                             if enable_cooldown and i > 0:
                                 time.sleep(batch_delay_ms / 1000.0)
 
@@ -331,7 +301,6 @@ Batch to translate:
                             total_session_tokens += batch_tokens
                             token_stats_ph.markdown(f"**Batch Tokens:** `{batch_tokens}` | **Total Tokens:** `{total_session_tokens}`")
 
-                            # Cleaning & Parsing
                             clean_text = full_batch_response.replace("```", "").replace("**", "")
                             matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', clean_text, re.DOTALL))
                             
