@@ -32,25 +32,28 @@ with st.sidebar:
 # --- 🖥️ MAIN INTERFACE ---
 st.title("✨ Gemini Subtitle Translator")
 
-# --- ⚙️ FOLDABLE API CONFIGURATION MENU (CLEAN & COMPACT) ---
+# --- ⚙️ FOLDABLE API CONFIGURATION MENU ---
 with st.expander("🛠️ API Configuration & Keys", expanded=False):
     
-    # 1. Add New Key (Validation Added)
+    # 1. Add New Key (FIXED VALIDATION)
     st.markdown("###### ➕ Add New API Key")
     c1, c2 = st.columns([0.85, 0.15])
     with c1:
-        new_key_input = st.text_input("Key Input", placeholder="Paste 'Alza...' key here", label_visibility="collapsed")
+        new_key_input = st.text_input("Key Input", placeholder="Paste 'AIza...' key here", label_visibility="collapsed")
     with c2:
         if st.button("Add", use_container_width=True):
-            # Validation: Must start with Alza and be long enough
-            if new_key_input and new_key_input.startswith("Alza") and len(new_key_input) > 20:
-                if new_key_input not in st.session_state.api_keys:
-                    st.session_state.api_keys.append(new_key_input)
+            # Clean Input
+            clean_key = new_key_input.strip()
+            
+            # Validation: Check length and 'AIza' (Capital i)
+            if len(clean_key) > 30 and (clean_key.startswith("AIza") or clean_key.startswith("Alza")): 
+                if clean_key not in st.session_state.api_keys:
+                    st.session_state.api_keys.append(clean_key)
                     if not st.session_state.active_key:
-                        st.session_state.active_key = new_key_input
+                        st.session_state.active_key = clean_key
                     st.rerun()
             else:
-                st.toast("❌ Invalid API Key! Must start with 'Alza'.")
+                st.toast("❌ Invalid Key! Google Keys usually start with 'AIza'.")
 
     # 2. COMPACT KEY LIST
     st.markdown("###### 🔑 Saved Keys")
@@ -60,38 +63,34 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
             st.caption("No keys saved. Add one above.")
         else:
             for idx, key in enumerate(st.session_state.api_keys):
-                # Mask Key Compactly
                 masked_label = f"{key[:6]}...{key[-4:]}"
                 
-                # Layout: Text/Button | Delete Icon
-                k_col1, k_col2 = st.columns([0.85, 0.15])
+                # Layout: Key Name (Clickable) | Delete (Icon)
+                k_col1, k_col2 = st.columns([0.88, 0.12])
                 
                 with k_col1:
                     if key == st.session_state.active_key:
-                        # Active State - Green Box style
                         st.success(f"✅ {masked_label}", icon=None)
                     else:
-                        # Inactive State - Click to Activate
                         if st.button(f"⚪ {masked_label}", key=f"sel_{idx}", use_container_width=True):
                             st.session_state.active_key = key
                             st.rerun()
                 
                 with k_col2:
-                    # Small Delete Button
-                    if st.button("🗑️", key=f"del_{idx}", help="Delete Key"):
+                    if st.button("🗑️", key=f"del_{idx}", help="Delete"):
                         st.session_state.api_keys.pop(idx)
                         if st.session_state.active_key == key:
                             st.session_state.active_key = None
                         st.rerun()
 
-    # 3. Status & Settings
+    # 3. Status & Advanced Settings
     if st.session_state.active_key:
         st.markdown("---")
         col_s1, col_s2 = st.columns([0.7, 0.3])
         with col_s1:
             st.caption(f"Status: **{st.session_state.api_status}**")
         with col_s2:
-            if st.button("Check", use_container_width=True):
+            if st.button("Check Status", use_container_width=True):
                 try:
                     client = genai.Client(api_key=st.session_state.active_key)
                     list(client.models.list(config={'page_size': 1}))
@@ -100,16 +99,14 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
                     st.session_state.api_status = "Dead 🔴"
                 st.rerun()
         
-        # Advanced Settings
-        with st.expander("⚙️ Advanced Settings", expanded=False):
-            enable_cooldown = st.checkbox("Enable Smart Cooldown (90s wait on limit)", value=True)
-            batch_sz = st.number_input("Batch Size", 1, 500, 20)
+        # Tech Settings (Removed Batch Size from here)
+        with st.expander("⚙️ Advanced Tech Settings (Delay, Tokens)", expanded=False):
+            enable_cooldown = st.checkbox("Enable Smart Cooldown (90s on 429 Error)", value=True)
             temperature_val = st.slider("Temperature", 0.0, 2.0, 0.3)
             max_tokens_val = st.number_input("Max Tokens", 1000, 32000, 8192)
-            batch_delay_ms = st.number_input("Normal Delay (ms)", 0, 5000, 500)
+            batch_delay_ms = st.number_input("Normal Batch Delay (ms)", 0, 5000, 500)
     else:
         enable_cooldown = True
-        batch_sz = 20
         temperature_val = 0.3
         max_tokens_val = 8192
         batch_delay_ms = 500
@@ -137,7 +134,8 @@ with col1:
 
 with col2:
     target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
-    st.caption(f"Batch: {batch_sz} | Delay: {batch_delay_ms}ms")
+    # --- BATCH SIZE IS BACK HERE ---
+    batch_sz = st.number_input("BATCH_SIZE", min_value=1, max_value=500, value=20, step=1, help="Number of subtitles to process at once.")
 
 user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
 start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
@@ -224,7 +222,7 @@ if start_button:
                 progress_text_ph.text(f"✅ Completed: 0 / {total_lines}")
                 progress_bar.progress(0)
                 
-                # --- NEW: COOLDOWN COUNTER ---
+                # Cooldown Counter
                 cooldown_hits = 0 
                 MAX_COOLDOWN_HITS = 3
                 
@@ -253,6 +251,7 @@ Batch:
                             end_line = min(i + batch_sz, total_lines)
                             console_box.markdown(f"**⏳ Batch {current_batch_num} ({start_line}-{end_line})...**")
                             
+                            # Normal Delay
                             if i > 0: time.sleep(batch_delay_ms / 1000.0)
 
                             response_stream = client.models.generate_content_stream(
@@ -281,11 +280,11 @@ Batch:
 
                         except Exception as e:
                             err_msg = str(e).lower()
-                            # --- 90s COOLDOWN LOGIC ---
+                            # --- 90s SMART COOLDOWN LOGIC ---
                             if ("429" in err_msg or "quota" in err_msg) and enable_cooldown:
                                 if cooldown_hits < MAX_COOLDOWN_HITS:
-                                    console_box.error(f"🛑 Rate Limit Hit! Waiting 90s... ({cooldown_hits+1}/{MAX_COOLDOWN_HITS})")
-                                    # Countdown Bar
+                                    console_box.error(f"🛑 Rate Limit Hit! Waiting 90s to Auto-Resume... ({cooldown_hits+1}/{MAX_COOLDOWN_HITS})")
+                                    # Countdown UI
                                     wait_bar = st.progress(0)
                                     for sec in range(90):
                                         time.sleep(1)
@@ -294,7 +293,7 @@ Batch:
                                     
                                     cooldown_hits += 1
                                     console_box.info("♻️ Resuming Batch...")
-                                    # Don't decrement retry, just loop again (Auto Resume)
+                                    # continue se loop wapas start hoga usi batch ke liye
                                     continue 
                                 else:
                                     console_box.error("❌ Max Cooldowns reached. Stopping.")
