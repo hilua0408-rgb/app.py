@@ -3,7 +3,6 @@ import re
 import os
 import time
 import math
-import datetime
 from google import genai
 from google.genai import types
 
@@ -14,7 +13,7 @@ st.set_page_config(page_title="Gemini Subtitle Pro", layout="wide")
 if 'api_keys' not in st.session_state: st.session_state.api_keys = []
 if 'active_key' not in st.session_state: st.session_state.active_key = None
 if 'api_status' not in st.session_state: st.session_state.api_status = "Unknown"
-if 'skipped_files' not in st.session_state: st.session_state.skipped_files = [] # Track skipped files
+if 'skipped_files' not in st.session_state: st.session_state.skipped_files = [] 
 
 # --- 📱 SIDEBAR ---
 with st.sidebar:
@@ -26,7 +25,6 @@ with st.sidebar:
     )
     st.markdown("---")
     
-    # Show Skipped Files Status
     if st.session_state.skipped_files:
         st.warning(f"⏩ Skipped Files: {len(st.session_state.skipped_files)}")
         if st.button("Clear Skipped History"):
@@ -85,8 +83,7 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
         with st.expander("⚙️ Advanced Tech Settings", expanded=False):
             enable_cooldown = st.checkbox("Smart Cooldown (90s on 429)", value=True)
             temp_val = st.slider("Temperature", 0.0, 2.0, 0.3)
-            # Max Tokens - Unlimited Input
-            max_tok_val = st.number_input("Max Output Tokens", min_value=100, value=8192, step=100, help="Higher is better for long translations.")
+            max_tok_val = st.number_input("Max Output Tokens", min_value=100, value=8192, step=100)
             delay_ms = st.number_input("Batch Delay (ms)", 0, 5000, 500)
     else:
         enable_cooldown=True; temp_val=0.3; max_tok_val=8192; delay_ms=500
@@ -115,6 +112,34 @@ with col2:
     batch_sz = st.number_input("BATCH_SIZE", 1, 500, 20)
 
 user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
+
+# --- FEATURES SECTION ---
+st.markdown("### ⚡ Features")
+
+# 1. Context Memory (Default Ticked)
+enable_memory = st.checkbox(
+    "🧠 Enable Context Memory (Maintains Flow)", 
+    value=True, 
+    help="Passes the last translated batch to the AI so it remembers the story flow."
+)
+
+# 2. Deep Analysis (Toggle Box)
+enable_analysis = st.checkbox(
+    "🧐 Enable Deep File Analysis (Context Awareness)", 
+    value=True, 
+    help="AI will read the full file first to understand Story, Gender & Tone."
+)
+
+# 3. Conditional Text Area for Analysis
+if enable_analysis:
+    analysis_instr = st.text_area(
+        "Analysis Instructions (Optional)", 
+        placeholder="It's optional! You can type how you want your summary or note anything specific for the AI to focus on (e.g., 'Focus on formal tone')...",
+        height=100
+    )
+else:
+    analysis_instr = ""
+
 start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
 
 # --- PROCESSOR ---
@@ -183,55 +208,115 @@ if start_button:
             progress_bar = st.progress(0)
             token_stats_ph = st.empty()
             
-            st.markdown("### Current Batch Status (Live):")
+            st.markdown("### Live Console:")
             with st.container(height=300, border=True):
                 console_box = st.empty()
             
             total_session_tokens = 0
             
             for file_idx, uploaded_file in enumerate(uploaded_files):
-                # --- SKIP LOGIC ---
                 if uploaded_file.name in st.session_state.skipped_files:
-                    st.warning(f"⏩ Skipping {uploaded_file.name} (as per user request).")
-                    time.sleep(1)
-                    continue
+                    st.warning(f"⏩ Skipping {uploaded_file.name}."); time.sleep(1); continue
                 
                 proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
                 total_lines = proc.parse()
                 file_status_ph.markdown(f"### 📂 File {file_idx+1}/{len(uploaded_files)}: **{uploaded_file.name}**")
                 
+                # --- PHASE 1: FULL FILE ANALYSIS ---
+                file_context_summary = "No analysis requested."
+                
+                if enable_analysis:
+                    try:
+                        console_box.info("🧠 Analyzing the full file context... Please wait.")
+                        
+                        full_script = "\n".join([f"{x['id']}: {x['txt']}" for x in proc.lines])
+                        
+                        analysis_system_prompt = f"""
+ROLE: You are a LOGIC-ONLY DATA ANALYST.
+INPUT CONSTRAINTS: Input contains {total_lines} lines.
+YOUR TASK: Provide a context report based ONLY on the provided text.
+REQUIRED OUTPUT FORMAT:
+1. **Genre & Tone**
+2. **Story Flow (Summary)**
+3. **Key Characters** (Names + Gender + Relations)
+4. **Translation Notes** (Specific terminology)
+User Instructions: "{analysis_instr}"
+
+INPUT TEXT:
+{full_script}
+"""
+                        ana_stream = client.models.generate_content_stream(
+                            model=model_name,
+                            contents=analysis_system_prompt,
+                            config=types.GenerateContentConfig(temperature=0.3)
+                        )
+                        
+                        full_analysis_text = ""
+                        for chunk in ana_stream:
+                            if chunk.text:
+                                full_analysis_text += chunk.text
+                                console_box.markdown(f"**🧠 Analyzing File...**\n\n{full_analysis_text}")
+                        
+                        file_context_summary = full_analysis_text
+                        console_box.success("✅ Analysis Complete! Starting Translation...")
+                        time.sleep(1.5)
+                        
+                    except Exception as e:
+                        console_box.error(f"⚠️ Analysis Failed: {e}. Proceeding without context.")
+                        file_context_summary = "Analysis failed."
+                        time.sleep(2)
+
+                # --- PHASE 2: BATCH TRANSLATION ---
                 trans_map = {}
                 progress_text_ph.text(f"✅ Completed: 0 / {total_lines}")
                 progress_bar.progress(0)
+                cooldown_hits = 0; MAX_COOLDOWN_HITS = 3
                 
-                cooldown_hits = 0 
-                MAX_COOLDOWN_HITS = 3
-                
+                # Context Memory Storage
+                previous_batch_context = ""
+
                 for i in range(0, total_lines, batch_sz):
                     current_batch_num = (i // batch_sz) + 1
                     chunk = proc.lines[i : i + batch_sz]
                     batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
                     
-                    prompt = f"""You are a translator.
+                    # --- PROMPT CONSTRUCTION ---
+                    
+                    # 1. Add Previous Context if Enabled
+                    memory_block = ""
+                    if enable_memory and previous_batch_context:
+                        memory_block = f"""
+[PREVIOUS TRANSLATED BATCH - FOR FLOW]:
+{previous_batch_context}
+(Continue the story smoothly from here)
+"""
+
+                    prompt = f"""You are a professional translator.
 TASK: Translate {source_lang} to {target_lang}.
-NOTE: {user_instr}
-STRICT OUTPUT RULES:
+
+[FILE CONTEXT & SUMMARY]:
+{file_context_summary}
+
+{memory_block}
+
+[USER INSTRUCTIONS]:
+{user_instr}
+
+[STRICT FORMAT RULES]:
 1. NO Code Blocks/Bolding.
 2. ONLY format:
 [ID]
 Translated Text
-Batch:
+
+[BATCH TO TRANSLATE]:
 {batch_txt}"""
                     
-                    retry = 3
-                    success = False
+                    retry = 3; success = False
                     
                     while retry > 0:
                         try:
-                            start_line = i + 1
-                            end_line = min(i + batch_sz, total_lines)
+                            start_line = i + 1; end_line = min(i + batch_sz, total_lines)
                             console_box.markdown(f"**⏳ Batch {current_batch_num} ({start_line}-{end_line})...**")
-                            
                             if i > 0: time.sleep(delay_ms / 1000.0)
 
                             response_stream = client.models.generate_content_stream(
@@ -253,16 +338,20 @@ Batch:
                             
                             if matches:
                                 for m in matches: trans_map[m.group(1)] = m.group(2).strip()
+                                
+                                # --- UPDATE MEMORY ---
+                                if enable_memory:
+                                    # Store last 500 chars of this batch to guide the next one
+                                    previous_batch_context = clean_text[-1000:] 
+                                
                                 success = True; break
-                            else: 
-                                console_box.warning("⚠️ Parsing Error. Retrying...")
-                                retry -= 1; time.sleep(1)
+                            else: console_box.warning("⚠️ Formatting Error. Retrying..."); retry -= 1; time.sleep(1)
 
                         except Exception as e:
                             err_msg = str(e).lower()
                             if ("429" in err_msg or "quota" in err_msg) and enable_cooldown:
                                 if cooldown_hits < MAX_COOLDOWN_HITS:
-                                    console_box.error(f"🛑 Rate Limit! Waiting 90s... ({cooldown_hits+1}/{MAX_COOLDOWN_HITS})")
+                                    console_box.error(f"🛑 Limit Hit! Waiting 90s... ({cooldown_hits+1}/{MAX_COOLDOWN_HITS})")
                                     bar = st.progress(0)
                                     for s in range(90): time.sleep(1); bar.progress((s+1)/90)
                                     bar.empty(); cooldown_hits += 1; console_box.info("♻️ Resuming..."); continue 
@@ -274,26 +363,15 @@ Batch:
                         progress_text_ph.text(f"✅ Completed: {fin} / {total_lines}")
                         progress_bar.progress(fin / total_lines)
                     else:
-                        # --- 🚨 FAILURE OPTIONS MENU ---
-                        st.error(f"❌ Batch {current_batch_num} FAILED after multiple attempts.")
-                        
+                        st.error(f"❌ Batch {current_batch_num} FAILED.")
                         st.markdown("### ⚠️ Choose Action:")
-                        opt_c1, opt_c2 = st.columns(2)
-                        
-                        with opt_c1:
-                            if st.button("🔄 Try Again (Restart File)", key=f"retry_{file_idx}_{current_batch_num}", use_container_width=True):
-                                st.rerun()
-                        
-                        with opt_c2:
-                            # Only show 'Next File' if there is a next file
-                            if file_idx < len(uploaded_files) - 1:
-                                if st.button("⏭️ Skip to Next File", key=f"skip_{file_idx}", use_container_width=True):
-                                    st.session_state.skipped_files.append(uploaded_file.name)
-                                    st.rerun()
-                            else:
-                                st.warning("🚫 No Next File Available")
-
-                        st.stop() # Stops execution here to wait for user input
+                        c1, c2 = st.columns(2)
+                        with c1: 
+                            if st.button("🔄 Try Again", key=f"r_{file_idx}_{current_batch_num}", use_container_width=True): st.rerun()
+                        with c2: 
+                            if file_idx < len(uploaded_files)-1 and st.button("⏭️ Skip File", key=f"s_{file_idx}", use_container_width=True):
+                                st.session_state.skipped_files.append(uploaded_file.name); st.rerun()
+                        st.stop()
                 
                 if trans_map:
                     out = proc.get_output(trans_map)
