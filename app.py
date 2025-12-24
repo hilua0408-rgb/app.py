@@ -7,38 +7,40 @@ from google import genai
 from google.genai import types
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V2.9 (Mobile Fix)", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="Gemini Subtitle Pro V3.0 (Fixed UI)", layout="wide", page_icon="🎬")
 
 # --- 🎨 CUSTOM CSS ---
 st.markdown("""
 <style>
     .stButton>button { border-radius: 8px; font-weight: bold; }
-    .glossary-box { padding: 10px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 5px; }
     
-    /* 🔥 FIX: Make Import Button look like Export Button */
+    /* 🔥 FIX: COMPACT FILE UPLOADER (Import Button) */
     [data-testid='stFileUploader'] {
-        width: 100%;
         padding-top: 0px;
+        margin-top: -20px; /* Pull it up to align with Export */
     }
     [data-testid='stFileUploader'] section {
-        padding: 0;
-        min-height: 0;
-        border: none; /* Remove dashed border */
+        padding: 0px;
+        min-height: 0px;
+        border: none;
         background-color: transparent;
     }
-    /* Hide "Drag and drop file here" text and "Limit 200MB" */
-    [data-testid='stFileUploader'] section > div:first-child {
+    /* Hide the 'Drag and drop' text and small limit text */
+    [data-testid='stFileUploader'] .st-emotion-cache-1ae8axi, 
+    [data-testid='stFileUploader'] .st-emotion-cache-1erivf3 {
         display: none;
     }
-    /* Ensure the browse button stretches */
-    div[data-testid="stFileUploader"] button {
+    /* Force the 'Browse files' button to stretch */
+    [data-testid='stFileUploader'] button {
         width: 100%;
+        margin-top: 0px;
     }
 
-    /* Adjust Columns for Mobile Alignment */
+    /* 🔥 FIX: GLOSSARY LIST ALIGNMENT */
+    /* Reduce padding inside the scrollable container items */
     div[data-testid="column"] {
+        align-items: center;
         display: flex;
-        align-items: center; /* Vertically align text and buttons */
     }
 </style>
 """, unsafe_allow_html=True)
@@ -234,42 +236,42 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
     st.markdown("---")
     st.markdown("###### List of Words")
 
-    if not st.session_state.glossary:
-        st.caption("No words added yet.")
-    else:
-        for i, item in enumerate(st.session_state.glossary):
-            # Custom Card for List Item
-            with st.container():
-                # 🔥 UPDATED: Use columns with specific vertical alignment and ratio for Mobile
-                # Ratio [0.6, 0.2, 0.2] gives buttons enough room to stay inline
+    # 🔥 FIX 1: SCROLLABLE CONTAINER (3 fingers height approx 250px)
+    # This prevents the list from "eating" the whole UI.
+    with st.container(height=250, border=True):
+        if not st.session_state.glossary:
+            st.caption("No words added yet.")
+        else:
+            for i, item in enumerate(st.session_state.glossary):
+                # 🔥 FIX 2: ALIGNMENT "Samne" (Next to each other)
+                # Using vertical_alignment="center" to force buttons to align with text
                 try:
-                    cg1, cg2, cg3 = st.columns([0.6, 0.2, 0.2], vertical_alignment="center")
+                    cg1, cg2, cg3 = st.columns([0.55, 0.22, 0.23], vertical_alignment="center")
                 except TypeError:
-                    # Fallback for older Streamlit versions
-                    cg1, cg2, cg3 = st.columns([0.6, 0.2, 0.2])
+                    cg1, cg2, cg3 = st.columns([0.55, 0.22, 0.23]) # Fallback
                 
                 with cg1:
                     st.markdown(f"**{item['src']}** → {item['tgt']}")
                 with cg2:
-                    if st.button("Edit", key=f"edit_g_{i}"):
+                    if st.button("Edit", key=f"edit_g_{i}", use_container_width=True):
                         st.session_state.edit_index = i
                         st.rerun()
                 with cg3:
-                    if st.button("Delete", key=f"del_g_{i}"):
+                    if st.button("Delete", key=f"del_g_{i}", use_container_width=True):
                         st.session_state.glossary.pop(i)
                         if st.session_state.edit_index == i: st.session_state.edit_index = None
                         st.rerun()
                 st.divider()
 
-    # Import / Export JSON
+    # 🔥 FIX 3: IMPORT/EXPORT BUTTONS
     st.markdown("###### 📤 Import / Export")
-    gj1, gj2 = st.columns(2)
+    gj1, gj2 = st.columns(2, vertical_alignment="bottom")
     with gj1:
         # Export
         json_str = json.dumps(st.session_state.glossary, indent=2)
         st.download_button("Export (JSON)", json_str, "glossary.json", "application/json", use_container_width=True)
     with gj2:
-        # Import - CSS above hides the drag/drop box
+        # Import - CSS handles the look to make it Compact
         uploaded_json = st.file_uploader("Import (JSON)", type=['json'], label_visibility="collapsed")
         if uploaded_json:
             try:
