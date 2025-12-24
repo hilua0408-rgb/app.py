@@ -9,7 +9,7 @@ from google import genai
 from google.genai import types
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V3.2 (Editor Pro)", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="Gemini Subtitle Pro V4.0 (Final)", layout="wide", page_icon="🎬")
 
 # --- 🎨 CUSTOM CSS ---
 st.markdown("""
@@ -28,6 +28,9 @@ st.markdown("""
     
     /* 🔥 EDITOR TEXT AREAS */
     .stTextArea textarea { font-family: monospace; font-size: 14px; }
+    
+    /* 🔥 PROGRESS BAR COLOR */
+    .stProgress > div > div > div > div { background-color: #ff4b4b; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -220,65 +223,38 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
         current_file_obj = next((f for f in uploaded_files if f.name == selected_file_name), None)
         
         if current_file_obj:
-            # Initialize Processor
-            temp_proc = SubtitleProcessor(selected_file_name, current_file_obj.getvalue())
-            temp_proc.parse()
-
-            # Check if Translation Exists
-            is_translated = False
-            translated_content = ""
+            temp_proc = SubtitleProcessor(selected_file_name, current_file_obj.getvalue()); temp_proc.parse()
+            is_translated = False; translated_content = ""
             if selected_file_name in st.session_state.job_progress:
                 job = st.session_state.job_progress[selected_file_name]
                 if 'trans_map' in job and job['trans_map']:
                     is_translated = True
-                    # Reconstruct Translated Block for Editor
-                    # We use the same [ID] format for consistency
                     sorted_ids = sorted(job['trans_map'].keys(), key=lambda x: int(x) if x.isdigit() else x)
                     translated_content = "\n\n".join([f"[{vid}]\n{job['trans_map'][vid]}" for vid in sorted_ids])
 
-            # --- MODE A: TRANSLATION EXISTS (SIDE BY SIDE) ---
             if is_translated:
                 st.success("✅ Translation available. You can edit the result on the right.")
                 col_orig, col_trans = st.columns(2)
-                
                 with col_orig:
                     st.markdown("**Original Text (Reference)**")
-                    # Show Original (Read Only view or just text area disabled)
                     orig_text = "\n\n".join([f"[{line['id']}]\n{line['txt']}" for line in temp_proc.lines])
                     st.text_area("Original", value=orig_text, height=600, disabled=True, key=f"orig_view_{selected_file_name}")
-                
                 with col_trans:
                     st.markdown("**Translated Text (Editable)**")
                     new_trans_text = st.text_area("Edit Translation Here", value=translated_content, height=600, key=f"trans_edit_{selected_file_name}")
-                    
-                    # 🔥 AUTO SAVE LOGIC
                     if new_trans_text != translated_content:
-                        # Parse back to map
                         new_map = {}
                         matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', new_trans_text, re.DOTALL))
-                        for m in matches:
-                            new_map[m.group(1).strip()] = m.group(2).strip()
-                        
-                        # Update Session State
+                        for m in matches: new_map[m.group(1).strip()] = m.group(2).strip()
                         st.session_state.job_progress[selected_file_name]['trans_map'].update(new_map)
-                        st.toast("💾 Changes Saved to Memory!", icon="✅")
-                        time.sleep(1) # Small delay to ensure sync
-                        st.rerun()
-
-            # --- MODE B: NO TRANSLATION YET (SOURCE EDITING) ---
+                        st.toast("💾 Changes Saved to Memory!", icon="✅"); time.sleep(1); st.rerun()
             else:
                 st.info("ℹ️ No translation yet. You can edit the Source Text below before starting.")
-                # Load from file_edits if exists, else raw
-                if selected_file_name in st.session_state.file_edits:
-                    display_content = st.session_state.file_edits[selected_file_name]
-                else:
-                    display_content = "\n\n".join([f"[{line['id']}]\n{line['txt']}" for line in temp_proc.lines])
-
-                # Search Tools
+                if selected_file_name in st.session_state.file_edits: display_content = st.session_state.file_edits[selected_file_name]
+                else: display_content = "\n\n".join([f"[{line['id']}]\n{line['txt']}" for line in temp_proc.lines])
                 c_search1, c_search2 = st.columns([0.8, 0.2])
                 search_query = c_search1.text_input("Find text...", label_visibility="collapsed", placeholder="Find text...")
                 is_non_roman = c_search2.checkbox("Non-Roman")
-                
                 if search_query or is_non_roman:
                     found_lines = []
                     matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', display_content, re.DOTALL))
@@ -290,12 +266,8 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
                             if re.search(r'[^\x00-\x7F]', clean_txt): match_found = True
                         if match_found: found_lines.append(lid)
                     st.caption(f"🔍 Found in IDs: {', '.join(found_lines[:20])}..." if found_lines else "🔍 No matches.")
-
                 edited_content = st.text_area(f"Edit Source ({selected_file_name})", value=display_content, height=400, key=f"editor_{selected_file_name}")
-                
-                if edited_content != display_content:
-                    st.session_state.file_edits[selected_file_name] = edited_content
-                    st.success("✅ Source Updated! AI will use this text.")
+                if edited_content != display_content: st.session_state.file_edits[selected_file_name] = edited_content; st.success("✅ Source Updated! AI will use this text.")
 
 # --- 4. TRANSLATION SETTINGS ---
 with st.expander("⚙️ Translation Settings", expanded=False):
@@ -387,7 +359,8 @@ if start_button:
                         # Translation
                         trans_map = job['trans_map']; completed_set = set(job['done_ids'])
                         progress_text_ph.text(f"✅ Completed: {len(completed_set)} / {total_lines}"); progress_bar.progress(len(completed_set) / total_lines)
-                        cooldown_hits = 0; MAX_COOLDOWN_HITS = 3
+                        cooldown_hits = 0; 
+                        
                         for i in range(0, total_lines, batch_sz):
                             chunk = proc.lines[i : i + batch_sz]
                             if all(x['id'] in completed_set for x in chunk): continue
@@ -400,14 +373,23 @@ if start_button:
 
                             prompt = f"""You are a professional translator.\nTASK: Translate {source_lang} to {target_lang}.\n[CONTEXT]: {file_context_summary}\n{glossary_text}\n{memory_block}\n[INSTRUCTIONS]: {user_instr}\n[FORMAT]:\n[ID]\nTranslated Text\n\n[INPUT]:\n{batch_txt}"""
                             retry = 3; success = False
+                            
                             while retry > 0:
                                 try:
                                     if i > 0: time.sleep(delay_ms / 1000.0)
                                     response_stream = client.models.generate_content_stream(model=model_name, contents=prompt, config=types.GenerateContentConfig(temperature=temp_val, max_output_tokens=max_tok_val))
                                     full_resp = ""
+                                    batch_tokens = 0
                                     for chunk_resp in response_stream:
                                         if chunk_resp.text: full_resp += chunk_resp.text; console_box.markdown(f"**Translating Batch {current_batch_num}...**\n\n```text\n{full_resp}\n```")
-                                        if chunk_resp.usage_metadata: total_session_tokens += chunk_resp.usage_metadata.total_token_count; token_stats_ph.markdown(f"**Tokens:** `{total_session_tokens}`")
+                                        # 🔥 ACCURATE TOKEN COUNTING
+                                        if chunk_resp.usage_metadata:
+                                            batch_tokens = chunk_resp.usage_metadata.total_token_count
+                                    
+                                    # Add batch usage to global
+                                    total_session_tokens += batch_tokens
+                                    token_stats_ph.markdown(f"**Tokens (Batch):** `{batch_tokens}` | **Total:** `{total_session_tokens}`")
+
                                     clean_text = full_resp.replace("```", "").replace("**", "")
                                     matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', clean_text, re.DOTALL))
                                     if matches:
@@ -415,11 +397,25 @@ if start_button:
                                         for m in matches: mid = m.group(1).strip(); trans_map[mid] = m.group(2).strip(); completed_set.add(mid); found_any = True
                                         if found_any: job['trans_map'] = trans_map; job['done_ids'] = list(completed_set); st.session_state.job_progress[fname] = job; success = True; break
                                     if not success: console_box.warning("⚠️ Formatting Error. Retrying..."); retry -= 1; time.sleep(1)
+                                
                                 except Exception as e:
                                     if "429" in str(e).lower() and enable_cooldown:
-                                        if cooldown_hits < MAX_COOLDOWN_HITS: console_box.error(f"🛑 429 Limit! Waiting 60s..."); time.sleep(60); cooldown_hits+=1; continue
-                                        else: break
+                                        # 🔥 429 LOGIC WITH VISUAL SLIDER
+                                        if cooldown_hits < 1: # Only 1 retry allowed
+                                            console_box.empty()
+                                            err_box = console_box.container()
+                                            prog_bar = err_box.progress(1.0)
+                                            for t in range(60, 0, -1):
+                                                err_box.error(f"🛑 Rate Limit Hit (429). Cooling down... {t}s")
+                                                prog_bar.progress(t / 60.0)
+                                                time.sleep(1)
+                                            err_box.empty()
+                                            cooldown_hits += 1
+                                            continue # Retry loop
+                                        else:
+                                            st.error("❌ CHECK API: Quota Exceeded or Limit Reached (429)."); st.stop()
                                     else: console_box.error(f"Error: {e}"); retry -= 1; time.sleep(2)
+                            
                             if success: progress_text_ph.text(f"✅ Completed: {len(completed_set)} / {total_lines}"); progress_bar.progress(len(completed_set) / total_lines)
                             else: st.error("❌ Batch Failed. Progress Saved. Click Resume."); st.stop()
 
