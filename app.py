@@ -41,10 +41,10 @@ def save_current_settings(model, src, tgt, batch, temp, tok, mem, ana, rev, u_pr
     }
     with open(SETTINGS_FILE, "w") as f:
         json.dump(data, f)
-    st.toast("💾 Settings Saved!", icon="✅")
+    st.toast("💾 Settings Saved! Will load on refresh.", icon="✅")
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V4.3 (Layout Fix)", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="Gemini Subtitle Pro V4.4 (Bug Fixes)", layout="wide", page_icon="🎬")
 
 # --- 📦 SESSION STATE INIT ---
 if 'api_keys' not in st.session_state: st.session_state.api_keys = []
@@ -233,7 +233,10 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
     with gj2:
         uploaded_json = st.file_uploader("Import (JSON)", type=['json'], label_visibility="collapsed")
         if uploaded_json:
-            try: st.session_state.glossary = json.load(uploaded_json); st.success("Imported!"); time.sleep(1); st.rerun()
+            try: 
+                # 🔥 FIX 1: Robust JSON Loading
+                st.session_state.glossary = json.loads(uploaded_json.getvalue().decode("utf-8"))
+                st.success("Imported!"); time.sleep(1); st.rerun()
             except: st.error("Invalid JSON")
 
 # --- 3. 📝 SMART FILE EDITOR (DUAL MODE) ---
@@ -256,7 +259,6 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
                     sorted_ids = sorted(job['trans_map'].keys(), key=lambda x: int(x) if x.isdigit() else x)
                     translated_content = "\n\n".join([f"[{vid}]\n{job['trans_map'][vid]}" for vid in sorted_ids])
 
-            # DUAL MODE with Search on Translated side
             if is_translated:
                 st.success(f"✅ Editing: {selected_file_name} (Translated)")
                 col_orig, col_trans = st.columns(2)
@@ -267,7 +269,6 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
                     st.text_area("Original", value=orig_text, height=350, disabled=True, key=f"orig_view_{selected_file_name}")
                 
                 with col_trans:
-                    # 🔥 NEW: Search Tools ABOVE Translated Text
                     st.markdown("**Translated (Editable)**")
                     c_search1, c_search2 = st.columns([0.8, 0.2])
                     search_query = c_search1.text_input("Find text...", label_visibility="collapsed", placeholder="Find text...", key=f"search_trans_{selected_file_name}")
@@ -294,7 +295,6 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
                         st.session_state.job_progress[selected_file_name]['trans_map'].update(new_map)
                         st.toast("💾 Saved to Memory!", icon="✅"); time.sleep(1); st.rerun()
             
-            # SOURCE MODE
             else:
                 st.info(f"ℹ️ Editing Source: {selected_file_name}")
                 if selected_file_name in st.session_state.file_edits: display_content = st.session_state.file_edits[selected_file_name]
@@ -321,15 +321,32 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
 # --- 4. TRANSLATION SETTINGS ---
 with st.expander("⚙️ Translation Settings", expanded=False):
     col1, col2 = st.columns(2)
+    
+    # 🔥 FIX 2: MODEL SELECTION PERSISTENCE
+    # We use 'saved_model_name' as the initializer for the widget state
     def_model = st.session_state.get('saved_model_name', "gemini-2.0-flash")
+    # If the session state key for the widget doesn't exist yet, initialize it
+    if "current_model_selection" not in st.session_state:
+        st.session_state.current_model_selection = def_model
+
     def_src = st.session_state.get('saved_source_lang', "English")
     def_tgt = st.session_state.get('saved_target_lang', "Roman Hindi")
     def_batch = st.session_state.get('saved_batch_sz', 20)
+    
     with col1:
         default_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"]
         if 'model_list' not in st.session_state: st.session_state['model_list'] = default_models
-        if def_model not in st.session_state['model_list']: st.session_state['model_list'].insert(0, def_model)
-        model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'], index=st.session_state['model_list'].index(def_model) if def_model in st.session_state['model_list'] else 0)
+        # Ensure our selected model is actually in the list (e.g. if it was fetched previously)
+        if st.session_state.current_model_selection not in st.session_state['model_list']:
+            st.session_state['model_list'].insert(0, st.session_state.current_model_selection)
+        
+        # Selectbox uses 'key' to maintain state across reruns automatically
+        model_name = st.selectbox(
+            "MODEL_NAME", 
+            st.session_state['model_list'], 
+            key="current_model_selection"
+        )
+        
         if st.button("🔄 Fetch Models"):
             if st.session_state.active_key:
                 try:
@@ -363,6 +380,7 @@ st.markdown("---")
 user_instr = st.text_area("USER_INSTRUCTION", value=def_u_instr)
 
 if cs2.button("💾 Save Settings", key="real_save_btn", help="Save ALL settings permanently", use_container_width=True):
+    # Pass the session state value (model_name) to the save function
     save_current_settings(model_name, source_lang, target_lang, batch_sz, temp_val, max_tok_val, enable_memory, enable_analysis, enable_revision, user_instr, analysis_instr, revision_instr)
 
 work_status = "new" 
