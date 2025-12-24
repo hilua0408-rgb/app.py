@@ -7,7 +7,7 @@ from google import genai
 from google.genai import types
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V2.8 (Glossary Edition)", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="Gemini Subtitle Pro V2.9 (Mobile Fix)", layout="wide", page_icon="🎬")
 
 # --- 🎨 CUSTOM CSS ---
 st.markdown("""
@@ -15,18 +15,30 @@ st.markdown("""
     .stButton>button { border-radius: 8px; font-weight: bold; }
     .glossary-box { padding: 10px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 5px; }
     
-    /* Make Import (File Uploader) look more like a button (Compact) */
-    div[data-testid="stFileUploader"] section {
-        padding: 0.5rem;
-        min-height: 0px;
+    /* 🔥 FIX: Make Import Button look like Export Button */
+    [data-testid='stFileUploader'] {
+        width: 100%;
+        padding-top: 0px;
     }
-    div[data-testid="stFileUploader"] {
-        margin-top: -18px; /* Align with Export button */
+    [data-testid='stFileUploader'] section {
+        padding: 0;
+        min-height: 0;
+        border: none; /* Remove dashed border */
+        background-color: transparent;
     }
-    
-    /* Compact columns for Edit/Delete buttons */
+    /* Hide "Drag and drop file here" text and "Limit 200MB" */
+    [data-testid='stFileUploader'] section > div:first-child {
+        display: none;
+    }
+    /* Ensure the browse button stretches */
+    div[data-testid="stFileUploader"] button {
+        width: 100%;
+    }
+
+    /* Adjust Columns for Mobile Alignment */
     div[data-testid="column"] {
-        padding: 0px;
+        display: flex;
+        align-items: center; /* Vertically align text and buttons */
     }
 </style>
 """, unsafe_allow_html=True)
@@ -39,9 +51,9 @@ if 'skipped_files' not in st.session_state: st.session_state.skipped_files = []
 if 'file_edits' not in st.session_state: st.session_state.file_edits = {}
 if 'job_progress' not in st.session_state: st.session_state.job_progress = {}
 
-# 🔥 NEW: Glossary State
-if 'glossary' not in st.session_state: st.session_state.glossary = [] # List of dicts: {'src': 'Hi', 'tgt': 'Hey'}
-if 'edit_index' not in st.session_state: st.session_state.edit_index = None # To track which word is being edited
+# 🔥 Glossary State
+if 'glossary' not in st.session_state: st.session_state.glossary = [] 
+if 'edit_index' not in st.session_state: st.session_state.edit_index = None 
 
 # --- 📱 SIDEBAR ---
 with st.sidebar:
@@ -53,7 +65,6 @@ with st.sidebar:
     )
     st.markdown("---")
     
-    # 🛑 AUTO CLEANUP Logic
     if uploaded_files:
         current_filenames = [f.name for f in uploaded_files]
         progress_keys = list(st.session_state.job_progress.keys())
@@ -180,7 +191,7 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
     else:
         enable_cooldown=True; temp_val=0.3; max_tok_val=65536; delay_ms=500
 
-# --- 2. 📚 GLOSSARY / WORDS MENU (NEW FEATURE) ---
+# --- 2. 📚 GLOSSARY / WORDS MENU ---
 with st.expander("📚 Words Menu (Glossary)", expanded=False):
     st.info("💡 Add specific words here. The AI will be instructed to STRICTLY use these translations.")
     
@@ -206,7 +217,7 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
         if src_in and tgt_in:
             if st.session_state.edit_index is not None:
                 st.session_state.glossary[st.session_state.edit_index] = {'src': src_in, 'tgt': tgt_in}
-                st.session_state.edit_index = None # Reset edit mode
+                st.session_state.edit_index = None
                 st.success("Word Updated!")
             else:
                 st.session_state.glossary.append({'src': src_in, 'tgt': tgt_in})
@@ -229,16 +240,22 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
         for i, item in enumerate(st.session_state.glossary):
             # Custom Card for List Item
             with st.container():
-                # 🔥 UPDATED: Tighter columns [0.8, 0.1, 0.1] and Icons for "chota/samne" look
-                cg1, cg2, cg3 = st.columns([0.8, 0.1, 0.1])
+                # 🔥 UPDATED: Use columns with specific vertical alignment and ratio for Mobile
+                # Ratio [0.6, 0.2, 0.2] gives buttons enough room to stay inline
+                try:
+                    cg1, cg2, cg3 = st.columns([0.6, 0.2, 0.2], vertical_alignment="center")
+                except TypeError:
+                    # Fallback for older Streamlit versions
+                    cg1, cg2, cg3 = st.columns([0.6, 0.2, 0.2])
+                
                 with cg1:
                     st.markdown(f"**{item['src']}** → {item['tgt']}")
                 with cg2:
-                    if st.button("✏️", key=f"edit_g_{i}", help="Edit"):
+                    if st.button("Edit", key=f"edit_g_{i}"):
                         st.session_state.edit_index = i
                         st.rerun()
                 with cg3:
-                    if st.button("🗑️", key=f"del_g_{i}", help="Delete"):
+                    if st.button("Delete", key=f"del_g_{i}"):
                         st.session_state.glossary.pop(i)
                         if st.session_state.edit_index == i: st.session_state.edit_index = None
                         st.rerun()
@@ -252,14 +269,14 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
         json_str = json.dumps(st.session_state.glossary, indent=2)
         st.download_button("Export (JSON)", json_str, "glossary.json", "application/json", use_container_width=True)
     with gj2:
-        # Import - CSS above makes this look more like a button
+        # Import - CSS above hides the drag/drop box
         uploaded_json = st.file_uploader("Import (JSON)", type=['json'], label_visibility="collapsed")
         if uploaded_json:
             try:
                 data = json.load(uploaded_json)
                 if isinstance(data, list):
                     st.session_state.glossary = data
-                    st.success("Glossary Imported!")
+                    st.success("Imported!")
                     time.sleep(1)
                     st.rerun()
             except:
