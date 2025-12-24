@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V2.3", layout="wide")
+st.set_page_config(page_title="Gemini Subtitle Pro V2.4", layout="wide")
 
 # --- 📦 SESSION STATE ---
 if 'api_keys' not in st.session_state: st.session_state.api_keys = []
@@ -144,18 +144,16 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
     else:
         enable_cooldown=True; temp_val=0.3; max_tok_val=65536; delay_ms=500
 
-# --- 2. CLEAN FILE EDITOR WITH SEARCH (UPDATED) ---
+# --- 2. CLEAN FILE EDITOR WITH SEARCH (FIXED) ---
 with st.expander("📝 File Editor (Search & Fix)", expanded=False):
     if not uploaded_files:
         st.info("⚠️ Please upload files in the sidebar first.")
     else:
-        # File Selector
         file_names = [f.name for f in uploaded_files]
         selected_file_name = st.selectbox("Select File to Edit", file_names)
         current_file_obj = next((f for f in uploaded_files if f.name == selected_file_name), None)
         
         if current_file_obj:
-            # Load Content
             if selected_file_name in st.session_state.file_edits:
                 display_content = st.session_state.file_edits[selected_file_name]
             else:
@@ -171,8 +169,6 @@ with st.expander("📝 File Editor (Search & Fix)", expanded=False):
             found_count = 0
             if search_query or is_non_roman:
                 found_lines = []
-                # Simple logic to find lines in the current display content
-                # Split by IDs to search
                 matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', display_content, re.DOTALL))
                 for m in matches:
                     lid = m.group(1)
@@ -181,8 +177,16 @@ with st.expander("📝 File Editor (Search & Fix)", expanded=False):
                     match_found = False
                     if search_query and search_query.lower() in txt.lower():
                         match_found = True
-                    if is_non_roman and re.search(r'[^\x00-\x7F]', txt): # Checks for non-ASCII
-                        match_found = True
+                    
+                    # --- FIXED NON-ROMAN LOGIC ---
+                    # Logic: Remove punctuation first, THEN check for Non-ASCII.
+                    # This ignores '.', '?', '...', etc.
+                    if is_non_roman:
+                        # Step 1: Remove all punctuation & symbols, keep only Words (Unicode)
+                        clean_txt = re.sub(r'[^\w\s]', '', txt)
+                        # Step 2: Check if what is left contains Non-ASCII (Hindi/Urdu/etc)
+                        if re.search(r'[^\x00-\x7F]', clean_txt):
+                            match_found = True
                     
                     if match_found:
                         found_lines.append(lid)
@@ -201,7 +205,6 @@ with st.expander("📝 File Editor (Search & Fix)", expanded=False):
                 key=f"editor_{selected_file_name}"
             )
             
-            # Save Logic
             if edited_content != display_content:
                 st.session_state.file_edits[selected_file_name] = edited_content
                 st.success("✅ Changes saved! (AI will use this text)")
@@ -278,22 +281,16 @@ if start_button:
                     if uploaded_file.name in st.session_state.skipped_files:
                         st.warning(f"⏩ Skipping {uploaded_file.name}."); time.sleep(1); continue
                     
-                    # 1. Parse Original File (To get Timestamps)
                     proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
                     proc.parse()
                     
-                    # 2. Check for Edits and Apply Logic
                     if uploaded_file.name in st.session_state.file_edits:
                         console_box.info(f"📝 Merging User Edits for {uploaded_file.name}...")
                         clean_edit_str = st.session_state.file_edits[uploaded_file.name]
-                        
-                        # Parse the clean [ID] \n Text format
                         user_edit_map = {}
                         edit_matches = re.finditer(r'\[(.*?)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[.*?\]|$)', clean_edit_str, re.DOTALL)
                         for m in edit_matches:
                             user_edit_map[m.group(1).strip()] = m.group(2).strip()
-                        
-                        # Update proc.lines with edited text
                         for line in proc.lines:
                             if line['id'] in user_edit_map:
                                 line['txt'] = user_edit_map[line['id']]
