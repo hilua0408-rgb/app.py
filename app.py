@@ -14,6 +14,20 @@ st.markdown("""
 <style>
     .stButton>button { border-radius: 8px; font-weight: bold; }
     .glossary-box { padding: 10px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 5px; }
+    
+    /* Make Import (File Uploader) look more like a button (Compact) */
+    div[data-testid="stFileUploader"] section {
+        padding: 0.5rem;
+        min-height: 0px;
+    }
+    div[data-testid="stFileUploader"] {
+        margin-top: -18px; /* Align with Export button */
+    }
+    
+    /* Compact columns for Edit/Delete buttons */
+    div[data-testid="column"] {
+        padding: 0px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -215,15 +229,16 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
         for i, item in enumerate(st.session_state.glossary):
             # Custom Card for List Item
             with st.container():
-                cg1, cg2, cg3 = st.columns([0.7, 0.15, 0.15])
+                # 🔥 UPDATED: Tighter columns [0.8, 0.1, 0.1] and Icons for "chota/samne" look
+                cg1, cg2, cg3 = st.columns([0.8, 0.1, 0.1])
                 with cg1:
                     st.markdown(f"**{item['src']}** → {item['tgt']}")
                 with cg2:
-                    if st.button("Edit", key=f"edit_g_{i}"):
+                    if st.button("✏️", key=f"edit_g_{i}", help="Edit"):
                         st.session_state.edit_index = i
                         st.rerun()
                 with cg3:
-                    if st.button("Delete", key=f"del_g_{i}"):
+                    if st.button("🗑️", key=f"del_g_{i}", help="Delete"):
                         st.session_state.glossary.pop(i)
                         if st.session_state.edit_index == i: st.session_state.edit_index = None
                         st.rerun()
@@ -237,7 +252,7 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
         json_str = json.dumps(st.session_state.glossary, indent=2)
         st.download_button("Export (JSON)", json_str, "glossary.json", "application/json", use_container_width=True)
     with gj2:
-        # Import
+        # Import - CSS above makes this look more like a button
         uploaded_json = st.file_uploader("Import (JSON)", type=['json'], label_visibility="collapsed")
         if uploaded_json:
             try:
@@ -350,7 +365,6 @@ else:
     btn_type = "secondary"
 
 start_button = st.button(btn_label, type=btn_type, use_container_width=True)
-# Reset button removed as requested
 
 # --- EXECUTION ---
 if start_button:
