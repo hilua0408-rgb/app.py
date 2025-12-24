@@ -6,33 +6,41 @@ from google import genai
 from google.genai import types
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V2.4", layout="wide")
+st.set_page_config(page_title="Gemini Subtitle Pro V2.6", layout="wide", page_icon="🎬")
+
+# --- 🎨 CUSTOM CSS ---
+st.markdown("""
+<style>
+    .stButton>button { border-radius: 8px; font-weight: bold; }
+    .status-wait { color: #e67e22; font-weight: bold; }
+    .status-stream { color: #27ae60; font-weight: bold; animation: blink 1s infinite; }
+    @keyframes blink { 50% { opacity: 0.5; } }
+</style>
+""", unsafe_allow_html=True)
 
 # --- 📦 SESSION STATE ---
 if 'api_keys' not in st.session_state: st.session_state.api_keys = []
 if 'active_key' not in st.session_state: st.session_state.active_key = None
-if 'api_status' not in st.session_state: st.session_state.api_status = "Unknown"
 if 'skipped_files' not in st.session_state: st.session_state.skipped_files = []
 if 'file_edits' not in st.session_state: st.session_state.file_edits = {}
+if 'job_progress' not in st.session_state: st.session_state.job_progress = {}
 
 # --- 📱 SIDEBAR ---
 with st.sidebar:
     st.header("📁 File Upload")
-    uploaded_files = st.file_uploader(
-        "Upload Subtitle Files",
-        type=['srt', 'vtt', 'ass'],
-        accept_multiple_files=True
-    )
+    uploaded_files = st.file_uploader("Upload Subtitles", type=['srt', 'vtt', 'ass'], accept_multiple_files=True)
     st.markdown("---")
     
-    if st.session_state.skipped_files:
-        st.warning(f"⏩ Skipped Files: {len(st.session_state.skipped_files)}")
-        if st.button("Clear Skipped History"):
-            st.session_state.skipped_files = []
-            st.rerun()
+    # Cleanup removed files
+    if uploaded_files:
+        current_names = [f.name for f in uploaded_files]
+        for k in list(st.session_state.job_progress.keys()):
+            if k not in current_names: del st.session_state.job_progress[k]
+    else: st.session_state.job_progress = {}
 
-# --- 🖥️ MAIN INTERFACE ---
-st.markdown("### ✨ Gemini Subtitle Translator & Polisher")
+    if st.session_state.skipped_files:
+        if st.button(f"Clear Skipped ({len(st.session_state.skipped_files)})"):
+            st.session_state.skipped_files = []; st.rerun()
 
 # --- PROCESSOR CLASS ---
 class SubtitleProcessor:
@@ -41,7 +49,6 @@ class SubtitleProcessor:
         try: self.raw = content_bytes.decode('utf-8').replace('\r\n', '\n')
         except: self.raw = content_bytes.decode('latin-1').replace('\r\n', '\n')
         self.lines = []
-        
     def parse(self):
         if self.ext == '.srt': self.srt()
         elif self.ext == '.vtt': self.vtt()
@@ -86,325 +93,215 @@ class SubtitleProcessor:
                 else: output+=l+"\n"
         return output
 
-# --- 1. API CONFIGURATION & ADVANCED SETTINGS ---
-with st.expander("🛠️ API Configuration & Keys", expanded=False):
-    st.markdown("###### ➕ Add New API Key")
+# --- MAIN INTERFACE ---
+st.markdown("### ✨ Gemini Subtitle Pro V2.6")
+
+# --- 1. SETTINGS ---
+with st.expander("🛠️ API & Settings", expanded=False):
     c1, c2 = st.columns([0.85, 0.15])
-    with c1:
-        new_key_input = st.text_input("Key Input", placeholder="Paste 'AIza...' key here", label_visibility="collapsed")
-    with c2:
-        if st.button("Add", use_container_width=True):
-            clean_key = new_key_input.strip()
-            if len(clean_key) > 30 and (clean_key.startswith("AIza") or clean_key.startswith("Alza")):
-                if clean_key not in st.session_state.api_keys:
-                    st.session_state.api_keys.append(clean_key)
-                    if not st.session_state.active_key: st.session_state.active_key = clean_key
-                    st.rerun()
-            else: st.toast("❌ Invalid Key!")
+    with c1: new_key = st.text_input("Key", placeholder="Paste AIza key...", label_visibility="collapsed")
+    with c2: 
+        if st.button("Add"):
+            cl = new_key.strip()
+            if cl.startswith("AIza") and cl not in st.session_state.api_keys:
+                st.session_state.api_keys.append(cl); st.session_state.active_key = cl; st.rerun()
 
-    st.markdown("###### 🔑 Saved Keys")
-    with st.container(height=120, border=True):
-        if not st.session_state.api_keys: st.caption("No keys saved.")
-        else:
-            for idx, key in enumerate(st.session_state.api_keys):
-                masked = f"{key[:6]}...{key[-4:]}"
-                k1, k2 = st.columns([0.88, 0.12])
-                with k1:
-                    if key == st.session_state.active_key: st.success(f"✅ {masked}", icon=None)
-                    else:
-                        if st.button(f"⚪ {masked}", key=f"sel_{idx}", use_container_width=True):
-                            st.session_state.active_key = key; st.rerun()
-                with k2:
-                    if st.button("🗑️", key=f"del_{idx}"):
-                        st.session_state.api_keys.pop(idx)
-                        if st.session_state.active_key == key: st.session_state.active_key = None
-                        st.rerun()
-
-    # --- API STATUS ---
     if st.session_state.active_key:
-        st.divider()
-        c_s1, c_s2 = st.columns([0.7, 0.3])
-        with c_s1: st.caption(f"API Status: **{st.session_state.api_status}**")
-        with c_s2:
-            if st.button("Check Status", use_container_width=True):
-                try:
-                    with genai.Client(api_key=st.session_state.active_key) as client:
-                        list(client.models.list(config={'page_size': 1}))
-                    st.session_state.api_status = "Alive 🟢"
-                except: st.session_state.api_status = "Dead 🔴"
-                st.rerun()
+        st.caption(f"Active: ...{st.session_state.active_key[-6:]}")
+        if st.button("🗑️ Remove"): st.session_state.api_keys.remove(st.session_state.active_key); st.session_state.active_key = None; st.rerun()
         
-        # --- HIDDEN ADVANCED SETTINGS (NESTED EXPANDER) ---
-        with st.expander("🎛️ Advanced Tech Parameters", expanded=False):
-            c_a1, c_a2, c_a3 = st.columns(3)
-            with c_a1: enable_cooldown = st.checkbox("Smart Cooldown", value=True)
-            with c_a2: temp_val = st.slider("Temperature", 0.0, 2.0, 0.3)
-            with c_a3: max_tok_val = st.number_input("Max Output Tokens", 100, 65536, 65536)
+        st.markdown("---")
+        # Hidden Tech Params
+        with st.expander("🎛️ Tech Parameters", expanded=False):
+            c_t1, c_t2 = st.columns(2)
+            with c_t1: temp_val = st.slider("Temperature", 0.0, 2.0, 0.3)
+            with c_t2: max_tok = st.number_input("Max Tokens", 100, 65536, 65536)
+            enable_cool = st.checkbox("Smart Cooldown (429 Fix)", True)
             delay_ms = 500
-    else:
-        enable_cooldown=True; temp_val=0.3; max_tok_val=65536; delay_ms=500
+    else: temp_val=0.3; max_tok=65536; enable_cool=True; delay_ms=500
 
-# --- 2. CLEAN FILE EDITOR WITH SEARCH (FIXED) ---
-with st.expander("📝 File Editor (Search & Fix)", expanded=False):
-    if not uploaded_files:
-        st.info("⚠️ Please upload files in the sidebar first.")
-    else:
-        file_names = [f.name for f in uploaded_files]
-        selected_file_name = st.selectbox("Select File to Edit", file_names)
-        current_file_obj = next((f for f in uploaded_files if f.name == selected_file_name), None)
-        
-        if current_file_obj:
-            if selected_file_name in st.session_state.file_edits:
-                display_content = st.session_state.file_edits[selected_file_name]
+# --- 2. EDITOR ---
+with st.expander("📝 File Editor", expanded=False):
+    if uploaded_files:
+        fn = [f.name for f in uploaded_files]; sel = st.selectbox("Select", fn)
+        cur = next((f for f in uploaded_files if f.name == sel), None)
+        if cur:
+            if sel in st.session_state.file_edits: dt = st.session_state.file_edits[sel]
             else:
-                temp_proc = SubtitleProcessor(selected_file_name, current_file_obj.getvalue())
-                temp_proc.parse()
-                display_content = "\n\n".join([f"[{line['id']}]\n{line['txt']}" for line in temp_proc.lines])
-
-            # --- SEARCH BAR ---
-            c_search1, c_search2, c_search3 = st.columns([0.6, 0.2, 0.2])
-            search_query = c_search1.text_input("Find text...", label_visibility="collapsed", placeholder="Find text...")
-            is_non_roman = c_search2.checkbox("Non-Roman")
+                p = SubtitleProcessor(sel, cur.getvalue()); p.parse()
+                dt = "\n\n".join([f"[{l['id']}]\n{l['txt']}" for l in p.lines])
             
-            found_count = 0
-            if search_query or is_non_roman:
-                found_lines = []
-                matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', display_content, re.DOTALL))
-                for m in matches:
-                    lid = m.group(1)
-                    txt = m.group(2).strip()
-                    
-                    match_found = False
-                    if search_query and search_query.lower() in txt.lower():
-                        match_found = True
-                    
-                    # --- FIXED NON-ROMAN LOGIC ---
-                    # Logic: Remove punctuation first, THEN check for Non-ASCII.
-                    # This ignores '.', '?', '...', etc.
-                    if is_non_roman:
-                        # Step 1: Remove all punctuation & symbols, keep only Words (Unicode)
-                        clean_txt = re.sub(r'[^\w\s]', '', txt)
-                        # Step 2: Check if what is left contains Non-ASCII (Hindi/Urdu/etc)
-                        if re.search(r'[^\x00-\x7F]', clean_txt):
-                            match_found = True
-                    
-                    if match_found:
-                        found_lines.append(lid)
-                
-                found_count = len(found_lines)
-                if found_lines:
-                    st.caption(f"🔍 Found **{found_count}** matches in IDs: {', '.join(found_lines[:20])}..." if found_count > 20 else f"🔍 Found in IDs: {', '.join(found_lines)}")
-                else:
-                    st.caption("🔍 No matches found.")
-
-            # --- EDITOR ---
-            edited_content = st.text_area(
-                f"Edit Content ({selected_file_name})", 
-                value=display_content, 
-                height=300,
-                key=f"editor_{selected_file_name}"
-            )
+            # Search
+            cs1, cs2 = st.columns([0.8, 0.2])
+            sq = cs1.text_input("Find", label_visibility="collapsed", placeholder="Search...")
+            nr = cs2.checkbox("Non-Roman")
+            if sq or nr:
+                mts = re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', dt, re.DOTALL)
+                fnds = []
+                for m in mts:
+                    t = m.group(2).strip()
+                    # Logic: Remove symbols, check if non-ascii remains
+                    clean_t = re.sub(r'[^\w\s]', '', t)
+                    if (sq and sq.lower() in t.lower()) or (nr and re.search(r'[^\x00-\x7F]', clean_t)):
+                        fnds.append(m.group(1))
+                st.caption(f"Found in: {', '.join(fnds[:10])}..." if fnds else "No match")
             
-            if edited_content != display_content:
-                st.session_state.file_edits[selected_file_name] = edited_content
-                st.success("✅ Changes saved! (AI will use this text)")
+            new_dt = st.text_area("Edit", dt, height=250)
+            if new_dt != dt: st.session_state.file_edits[sel] = new_dt; st.success("Saved!")
 
-# --- 3. TRANSLATION SETTINGS ---
-with st.expander("⚙️ Translation Settings", expanded=False):
-    col1, col2 = st.columns(2)
-    with col1:
-        default_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"]
-        if 'model_list' not in st.session_state: st.session_state['model_list'] = default_models
-        model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'])
-        
-        if st.button("🔄 Fetch Models"):
-            if st.session_state.active_key:
-                try:
-                    with genai.Client(api_key=st.session_state.active_key) as client:
-                        api_models = list(client.models.list())
-                    fetched = [m.name.replace("models/", "") for m in api_models if 'gemini' in m.name.lower()]
-                    if fetched:
-                        st.session_state['model_list'] = sorted(list(set(default_models + fetched)), reverse=True)
-                        st.success(f"Found {len(fetched)} models!"); time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"Error: {e}")
+# --- 3. TRANSLATION SETUP ---
+with st.expander("⚙️ Translation Config", expanded=False):
+    c1, c2 = st.columns(2)
+    with c1: 
+        mod = st.selectbox("Model", st.session_state.get('model_list', ["gemini-2.0-flash", "gemini-1.5-flash"]))
+        if st.button("Refresh Models") and st.session_state.active_key:
+            try: 
+                with genai.Client(api_key=st.session_state.active_key) as c:
+                    st.session_state['model_list'] = sorted([m.name.replace("models/","") for m in c.models.list() if 'gemini' in m.name.lower()], reverse=True)
+                    st.rerun()
+            except: pass
+        sl = st.text_input("Source", "English")
+    with c2: tl = st.text_input("Target", "Roman Hindi"); bs = st.number_input("Batch Size", 1, 500, 20)
 
-        source_lang = st.text_input("SOURCE_LANGUAGE", "English")
-
-    with col2:
-        target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
-        batch_sz = st.number_input("BATCH_SIZE", 1, 500, 20)
-
-# --- FEATURES SECTION ---
-st.markdown("### ⚡ Workflow Steps")
-enable_memory = st.checkbox("🧠 1. Context Memory (Maintains story flow)", value=True)
+# --- FEATURES ---
+st.markdown("### ⚡ Workflow")
+mem = st.checkbox("🧠 1. Context Memory", True)
 st.divider()
-
-enable_analysis = st.checkbox("🧐 2. Deep File Analysis (Read full file first)", value=False)
-if enable_analysis:
-    analysis_instr = st.text_area("Analysis Context Note", placeholder="E.g. 'Main character is female...'", height=68)
-else: analysis_instr = ""
-
+ana = st.checkbox("🧐 2. Analysis", False); ana_inst = st.text_area("Note", height=68) if ana else ""
 st.divider()
-
-enable_revision = st.checkbox("✨ 3. Revision / Polish (Fix grammar & flow)", value=False)
-if enable_revision:
-    revision_instr = st.text_area("Revision Instructions", placeholder="E.g. 'Fix grammar, check gender...'", height=68)
-else: revision_instr = ""
-
+rev = st.checkbox("✨ 3. Revision", False); rev_inst = st.text_area("Note", height=68) if rev else ""
 st.markdown("---")
-user_instr = st.text_area("USER_INSTRUCTION (For Main Translation)", "Translate into natural Roman Hindi. Keep Anime terms in English.")
+u_inst = st.text_area("Instructions", "Translate into natural Roman Hindi.")
 
-start_button = st.button("🚀 START TRANSLATION NOW", use_container_width=True)
+# --- START/RESUME BUTTON ---
+has_paused = any(st.session_state.job_progress.get(f.name, {}).get('status') == 'paused' for f in uploaded_files)
+c_b1, c_b2 = st.columns([0.8, 0.2])
+with c_b1:
+    btn_txt = "▶️ RESUME" if has_paused else "🚀 START"
+    btn_col = "primary" if has_paused else "secondary"
+    start = st.button(btn_txt, type=btn_col, use_container_width=True)
+with c_b2:
+    if st.button("🗑️ Reset"): st.session_state.job_progress = {}; st.rerun()
 
 # --- EXECUTION ---
-if start_button:
-    if not st.session_state.active_key or not uploaded_files:
-        st.error("❌ Add API Key & Upload Files!")
-    else:
+if start:
+    if not st.session_state.active_key or not uploaded_files: st.error("No Key/Files!"); st.stop()
+
+    with st.spinner("🔄 Initializing..."):
         try:
             with genai.Client(api_key=st.session_state.active_key) as client:
-                st.markdown("## Translation Status")
-                st.markdown("---")
+                st.markdown("## 📊 Live Progress")
                 
-                file_status_ph = st.empty()
-                progress_text_ph = st.empty()
-                progress_bar = st.progress(0)
-                token_stats_ph = st.empty()
+                # --- UPDATED STATS LAYOUT (Removed Speed, Added Status) ---
+                st_c1, st_c2 = st.columns(2)
+                status_ph = st_c1.empty() # For "Waiting/Streaming"
+                token_ph = st_c2.empty()
                 
-                st.markdown("### Live Console:")
-                with st.container(height=300, border=True):
-                    console_box = st.empty()
-                
-                total_session_tokens = 0
-                
-                for file_idx, uploaded_file in enumerate(uploaded_files):
-                    if uploaded_file.name in st.session_state.skipped_files:
-                        st.warning(f"⏩ Skipping {uploaded_file.name}."); time.sleep(1); continue
+                prog_bar = st.progress(0)
+                cons = st.container(height=300, border=True).empty()
+                total_tok = 0
+
+                for idx, file in enumerate(uploaded_files):
+                    fname = file.name
+                    if fname in st.session_state.skipped_files: continue
+
+                    # Init Progress
+                    if fname not in st.session_state.job_progress:
+                        st.session_state.job_progress[fname] = {'done_ids': [], 'trans_map': {}, 'analysis': "None", 'status': 'paused'}
+                    job = st.session_state.job_progress[fname]
                     
-                    proc = SubtitleProcessor(uploaded_file.name, uploaded_file.getvalue())
-                    proc.parse()
+                    # Parse (Handle Edits)
+                    if fname in st.session_state.file_edits:
+                        proc = SubtitleProcessor(fname, file.getvalue()); proc.parse()
+                        u_map = {m.group(1).strip(): m.group(2).strip() for m in re.finditer(r'\[(.*?)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[.*?\]|$)', st.session_state.file_edits[fname], re.DOTALL)}
+                        for l in proc.lines: 
+                            if l['id'] in u_map: l['txt'] = u_map[l['id']]
+                    else:
+                        proc = SubtitleProcessor(fname, file.getvalue()); proc.parse()
+
+                    tot_lines = len(proc.lines)
+                    status_ph.markdown(f"**📂 File:** {fname}")
                     
-                    if uploaded_file.name in st.session_state.file_edits:
-                        console_box.info(f"📝 Merging User Edits for {uploaded_file.name}...")
-                        clean_edit_str = st.session_state.file_edits[uploaded_file.name]
-                        user_edit_map = {}
-                        edit_matches = re.finditer(r'\[(.*?)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[.*?\]|$)', clean_edit_str, re.DOTALL)
-                        for m in edit_matches:
-                            user_edit_map[m.group(1).strip()] = m.group(2).strip()
-                        for line in proc.lines:
-                            if line['id'] in user_edit_map:
-                                line['txt'] = user_edit_map[line['id']]
+                    # Analysis
+                    if ana and job['analysis'] == "None":
+                        cons.info("🧠 Analyzing..."); full = "\n".join([f"{x['id']}: {x['txt']}" for x in proc.lines])
+                        try: job['analysis'] = client.models.generate_content(mod, contents=f"Analyze:\n{full[:30000]}").text; st.session_state.job_progress[fname]=job
+                        except: pass
+
+                    # Translation Loop
+                    t_map = job['trans_map']
+                    done = set(job['done_ids'])
                     
-                    total_lines = len(proc.lines)
-                    file_status_ph.markdown(f"### 📂 File {file_idx+1}/{len(uploaded_files)}: **{uploaded_file.name}**")
-                    
-                    # --- PHASE 1: ANALYSIS ---
-                    file_context_summary = "No analysis requested."
-                    if enable_analysis:
-                        try:
-                            console_box.info("🧠 Analyzing content...")
-                            full_script = "\n".join([f"{x['id']}: {x['txt']}" for x in proc.lines])
-                            ana_stream = client.models.generate_content_stream(
-                                model=model_name,
-                                contents=f"ANALYZE THIS SUBTITLE FILE ({total_lines} lines). Give Genre, Tone, Key Characters, Notes.\nInput:\n{full_script}",
-                                config=types.GenerateContentConfig(temperature=0.3)
-                            )
-                            full_analysis_text = ""
-                            for chunk in ana_stream:
-                                if chunk.text: full_analysis_text += chunk.text; console_box.markdown(f"**Analyzing...**\n\n{full_analysis_text}")
-                            file_context_summary = full_analysis_text
-                            console_box.success("✅ Analysis Complete!"); time.sleep(1)
-                        except Exception as e: console_box.error(f"⚠️ Analysis Failed: {e}"); file_context_summary = "Failed."
-
-                    # --- PHASE 2: TRANSLATION ---
-                    trans_map = {}
-                    progress_text_ph.text(f"✅ Completed: 0 / {total_lines}")
-                    progress_bar.progress(0)
-                    cooldown_hits = 0; MAX_COOLDOWN_HITS = 3
-                    previous_batch_context = ""
-
-                    for i in range(0, total_lines, batch_sz):
-                        current_batch_num = (i // batch_sz) + 1
-                        chunk = proc.lines[i : i + batch_sz]
-                        batch_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
-                        
-                        memory_block = ""
-                        if enable_memory and previous_batch_context:
-                            memory_block = f"\n[PREVIOUS CONTEXT]:\n{previous_batch_context}\n"
-
-                        prompt = f"""You are a professional translator.
-TASK: Translate {source_lang} to {target_lang}.
-
-[CONTEXT]: {file_context_summary}
-{memory_block}
-[INSTRUCTIONS]: {user_instr}
-[FORMAT]:
-[ID]
-Translated Text
-
-[INPUT]:
-{batch_txt}"""
-                        
-                        retry = 3; success = False
-                        while retry > 0:
-                            try:
-                                if i > 0: time.sleep(delay_ms / 1000.0)
-                                response_stream = client.models.generate_content_stream(
-                                    model=model_name, contents=prompt,
-                                    config=types.GenerateContentConfig(temperature=temp_val, max_output_tokens=max_tok_val)
-                                )
-                                full_resp = ""
-                                for chunk_resp in response_stream:
-                                    if chunk_resp.text: full_resp += chunk_resp.text; console_box.markdown(f"**Translating Batch {current_batch_num}...**\n\n```text\n{full_resp}\n```")
-                                    if chunk_resp.usage_metadata: total_session_tokens += chunk_resp.usage_metadata.total_token_count; token_stats_ph.markdown(f"**Tokens:** `{total_session_tokens}`")
-
-                                clean_text = full_resp.replace("```", "").replace("**", "")
-                                matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', clean_text, re.DOTALL))
-                                if matches:
-                                    for m in matches: trans_map[m.group(1)] = m.group(2).strip()
-                                    if enable_memory: previous_batch_context = clean_text[-1000:]
-                                    success = True; break
-                                else: console_box.warning("⚠️ Formatting Error. Retrying..."); retry -= 1; time.sleep(1)
-                            except Exception as e:
-                                if "429" in str(e).lower() and enable_cooldown:
-                                    if cooldown_hits < MAX_COOLDOWN_HITS:
-                                        console_box.error(f"🛑 429 Limit! Waiting 90s..."); time.sleep(90); cooldown_hits+=1; continue
-                                    else: break
-                                else: console_box.error(f"Error: {e}"); retry -= 1; time.sleep(2)
-
-                        if success:
-                            fin = min(i + batch_sz, total_lines)
-                            progress_text_ph.text(f"✅ Completed: {fin} / {total_lines}")
-                            progress_bar.progress(fin / total_lines)
-                        else: st.error("❌ Batch Failed."); st.stop()
-
-                    # --- PHASE 3: REVISION ---
-                    if enable_revision and trans_map:
-                        console_box.info("✨ Revising...")
-                        sorted_ids = sorted(trans_map.keys(), key=lambda x: int(x) if x.isdigit() else x)
-                        full_draft = "\n\n".join([f"[{vid}]\n{trans_map[vid]}" for vid in sorted_ids])
-                        rev_prompt = f"ROLE: Editor.\nTASK: Polish grammar/flow.\nCONTEXT: {file_context_summary}\nNOTE: {revision_instr}\nINPUT FORMAT: [ID] Text\nOUTPUT FORMAT: [ID] Fixed Text\n\n{full_draft}"
-                        
-                        try:
-                            rev_stream = client.models.generate_content_stream(model=model_name, contents=rev_prompt, config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=max_tok_val))
-                            full_rev = ""
-                            for c in rev_stream: 
-                                if c.text: full_rev += c.text; console_box.markdown(f"**Revising...**\n\n```text\n{full_rev}\n```")
+                    if len(done) < tot_lines:
+                        for i in range(0, tot_lines, bs):
+                            chunk = proc.lines[i:i+bs]
+                            if all(x['id'] in done for x in chunk): continue
                             
-                            rev_matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', full_rev, re.DOTALL))
-                            if rev_matches:
-                                for m in rev_matches: 
-                                    if m.group(1) in trans_map: trans_map[m.group(1)] = m.group(2).strip()
-                                console_box.success("✅ Revision Applied!")
-                        except Exception as e: console_box.warning(f"Revision skipped: {e}")
+                            b_num = (i//bs)+1
+                            b_txt = "".join([f"[{x['id']}]\n{x['txt']}\n\n" for x in chunk])
+                            
+                            # Memory
+                            ctx = ""
+                            if mem and t_map:
+                                last = sorted(t_map.keys(), key=lambda x:int(x) if x.isdigit() else x)[-3:]
+                                ctx = "\n".join([f"[{i}] {t_map[i]}" for i in last])
 
-                    # --- OUTPUT ---
-                    if trans_map:
-                        out = proc.get_output(trans_map)
-                        st.success(f"✅ {uploaded_file.name} Done!")
-                        st.download_button(f"⬇️ DOWNLOAD", out, f"trans_{uploaded_file.name}", key=f"d{file_idx}")
+                            prompt = f"Role: Translator {sl}->{tl}.\nContext: {job['analysis']}\nMem: {ctx}\nNote: {u_inst}\nFmt: [ID]\nTxt\n\nInput:\n{b_txt}"
+                            
+                            retry = 3
+                            while retry > 0:
+                                try:
+                                    if i > 0: time.sleep(delay_ms/1000)
+                                    
+                                    # --- STATUS: WAITING ---
+                                    # This is where the user wanted "1-2-3", replaced with Spinner/Text
+                                    cons.markdown(f"<span class='status-wait'>⏳ Batch {b_num}: Sending Request & Waiting...</span>", unsafe_allow_html=True)
+                                    batch_start_time = time.time()
+                                    
+                                    stream = client.models.generate_content_stream(mod, contents=prompt, config=types.GenerateContentConfig(temperature=temp_val, max_output_tokens=max_tok))
+                                    
+                                    full_resp = ""
+                                    first_chunk = True
+                                    
+                                    for c in stream:
+                                        if first_chunk:
+                                            # --- STATUS: STREAMING ---
+                                            # Waiting text is replaced immediately
+                                            cons.markdown(f"<span class='status-stream'>⚡ Batch {b_num}: Receiving Data...</span>", unsafe_allow_html=True)
+                                            first_chunk = False
+                                        
+                                        if c.text: full_resp += c.text; cons.code(full_resp, language="text")
+                                        if c.usage_metadata: total_tok += c.usage_metadata.total_token_count; token_ph.markdown(f"🪙 **Tokens:** {total_tok}")
+
+                                    # Save
+                                    clean = full_resp.replace("```", "").replace("**", "")
+                                    saved_count = 0
+                                    for m in re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', clean, re.DOTALL):
+                                        t_map[m.group(1).strip()] = m.group(2).strip()
+                                        done.add(m.group(1).strip())
+                                        saved_count += 1
+                                    
+                                    if saved_count > 0:
+                                        job['trans_map'] = t_map; job['done_ids'] = list(done)
+                                        st.session_state.job_progress[fname] = job
+                                        prog_bar.progress(len(done)/tot_lines)
+                                        
+                                        # Show Batch Time
+                                        batch_dur = time.time() - batch_start_time
+                                        st.toast(f"✅ Saved! ({batch_dur:.1f}s)", icon="💾")
+                                        break
+                                    else: retry-=1; time.sleep(1)
+                                except Exception as e:
+                                    if "429" in str(e) and enable_cool: cons.error("🛑 429 Limit. Cooling 60s..."); time.sleep(60)
+                                    else: cons.error(f"Error: {e}"); retry-=1; time.sleep(2)
+
+                    job['status'] = 'completed'
+                    st.session_state.job_progress[fname] = job
+                    
+                    final = proc.get_output(t_map)
+                    st.success(f"🎉 {fname} Done!")
+                    st.download_button(f"⬇️ {fname}", final, f"trans_{fname}")
 
                 st.balloons()
-                st.success("🎉 Process Complete!")
-    
-        except Exception as e: st.error(f"❌ Fatal Error: {e}")
+
+        except Exception as e: st.error(f"Fatal Error: {e}")
