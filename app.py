@@ -41,10 +41,10 @@ def save_current_settings(model, src, tgt, batch, temp, tok, mem, ana, rev, u_pr
     }
     with open(SETTINGS_FILE, "w") as f:
         json.dump(data, f)
-    st.toast("💾 Settings Saved! Will load on refresh.", icon="✅")
+    st.toast("💾 Settings Saved!", icon="✅")
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V4.4 (Bug Fixes)", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="Gemini Subtitle Pro V4.5 (Import Fix)", layout="wide", page_icon="🎬")
 
 # --- 📦 SESSION STATE INIT ---
 if 'api_keys' not in st.session_state: st.session_state.api_keys = []
@@ -234,10 +234,17 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
         uploaded_json = st.file_uploader("Import (JSON)", type=['json'], label_visibility="collapsed")
         if uploaded_json:
             try: 
-                # 🔥 FIX 1: Robust JSON Loading
-                st.session_state.glossary = json.loads(uploaded_json.getvalue().decode("utf-8"))
-                st.success("Imported!"); time.sleep(1); st.rerun()
-            except: st.error("Invalid JSON")
+                # 🔥 FIX: Handle Empty Buffer on Rerun
+                content = uploaded_json.getvalue().decode("utf-8")
+                if not content:
+                    st.warning("Delete from here to import words")
+                else:
+                    st.session_state.glossary = json.loads(content)
+                    st.success("Imported!")
+                    time.sleep(1)
+                    st.rerun()
+            except: 
+                st.warning("Delete from here to import words")
 
 # --- 3. 📝 SMART FILE EDITOR (DUAL MODE) ---
 with st.expander("📝 File Editor (Original & Translated)", expanded=True):
@@ -321,14 +328,8 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
 # --- 4. TRANSLATION SETTINGS ---
 with st.expander("⚙️ Translation Settings", expanded=False):
     col1, col2 = st.columns(2)
-    
-    # 🔥 FIX 2: MODEL SELECTION PERSISTENCE
-    # We use 'saved_model_name' as the initializer for the widget state
     def_model = st.session_state.get('saved_model_name', "gemini-2.0-flash")
-    # If the session state key for the widget doesn't exist yet, initialize it
-    if "current_model_selection" not in st.session_state:
-        st.session_state.current_model_selection = def_model
-
+    if "current_model_selection" not in st.session_state: st.session_state.current_model_selection = def_model
     def_src = st.session_state.get('saved_source_lang', "English")
     def_tgt = st.session_state.get('saved_target_lang', "Roman Hindi")
     def_batch = st.session_state.get('saved_batch_sz', 20)
@@ -336,16 +337,9 @@ with st.expander("⚙️ Translation Settings", expanded=False):
     with col1:
         default_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"]
         if 'model_list' not in st.session_state: st.session_state['model_list'] = default_models
-        # Ensure our selected model is actually in the list (e.g. if it was fetched previously)
         if st.session_state.current_model_selection not in st.session_state['model_list']:
             st.session_state['model_list'].insert(0, st.session_state.current_model_selection)
-        
-        # Selectbox uses 'key' to maintain state across reruns automatically
-        model_name = st.selectbox(
-            "MODEL_NAME", 
-            st.session_state['model_list'], 
-            key="current_model_selection"
-        )
+        model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'], key="current_model_selection")
         
         if st.button("🔄 Fetch Models"):
             if st.session_state.active_key:
@@ -380,7 +374,6 @@ st.markdown("---")
 user_instr = st.text_area("USER_INSTRUCTION", value=def_u_instr)
 
 if cs2.button("💾 Save Settings", key="real_save_btn", help="Save ALL settings permanently", use_container_width=True):
-    # Pass the session state value (model_name) to the save function
     save_current_settings(model_name, source_lang, target_lang, batch_sz, temp_val, max_tok_val, enable_memory, enable_analysis, enable_revision, user_instr, analysis_instr, revision_instr)
 
 work_status = "new" 
