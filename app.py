@@ -9,7 +9,7 @@ from google import genai
 from google.genai import types
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V4.0 (Final)", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="Gemini Subtitle Pro V4.1 (Persistent UI)", layout="wide", page_icon="🎬")
 
 # --- 🎨 CUSTOM CSS ---
 st.markdown("""
@@ -26,8 +26,8 @@ st.markdown("""
     /* 🔥 ALIGNMENT */
     div[data-testid="column"] { align-items: center; display: flex; }
     
-    /* 🔥 EDITOR TEXT AREAS */
-    .stTextArea textarea { font-family: monospace; font-size: 14px; }
+    /* 🔥 EDITOR TEXT AREAS (Compact Font) */
+    .stTextArea textarea { font-family: monospace; font-size: 13px; line-height: 1.4; }
     
     /* 🔥 PROGRESS BAR COLOR */
     .stProgress > div > div > div > div { background-color: #ff4b4b; }
@@ -214,6 +214,7 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
             except: st.error("Invalid JSON")
 
 # --- 3. 📝 SMART FILE EDITOR (DUAL MODE) ---
+# Always visible if files uploaded
 with st.expander("📝 File Editor (Original & Translated)", expanded=True):
     if not uploaded_files:
         st.info("⚠️ Please upload files in the sidebar first.")
@@ -225,6 +226,8 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
         if current_file_obj:
             temp_proc = SubtitleProcessor(selected_file_name, current_file_obj.getvalue()); temp_proc.parse()
             is_translated = False; translated_content = ""
+            
+            # Check if this file has progress data
             if selected_file_name in st.session_state.job_progress:
                 job = st.session_state.job_progress[selected_file_name]
                 if 'trans_map' in job and job['trans_map']:
@@ -233,25 +236,30 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
                     translated_content = "\n\n".join([f"[{vid}]\n{job['trans_map'][vid]}" for vid in sorted_ids])
 
             if is_translated:
-                st.success("✅ Translation available. You can edit the result on the right.")
+                st.success(f"✅ Editing: {selected_file_name} (Translated)")
                 col_orig, col_trans = st.columns(2)
                 with col_orig:
-                    st.markdown("**Original Text (Reference)**")
+                    st.markdown("**Original (Preview)**")
                     orig_text = "\n\n".join([f"[{line['id']}]\n{line['txt']}" for line in temp_proc.lines])
-                    st.text_area("Original", value=orig_text, height=600, disabled=True, key=f"orig_view_{selected_file_name}")
+                    # 🔥 HEIGHT = 250 (3 Line Box style)
+                    st.text_area("Original", value=orig_text, height=250, disabled=True, key=f"orig_view_{selected_file_name}")
                 with col_trans:
-                    st.markdown("**Translated Text (Editable)**")
-                    new_trans_text = st.text_area("Edit Translation Here", value=translated_content, height=600, key=f"trans_edit_{selected_file_name}")
+                    st.markdown("**Translated (Editable)**")
+                    # 🔥 HEIGHT = 250 (3 Line Box style)
+                    new_trans_text = st.text_area("Edit Translation", value=translated_content, height=250, key=f"trans_edit_{selected_file_name}")
+                    
                     if new_trans_text != translated_content:
                         new_map = {}
                         matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', new_trans_text, re.DOTALL))
                         for m in matches: new_map[m.group(1).strip()] = m.group(2).strip()
                         st.session_state.job_progress[selected_file_name]['trans_map'].update(new_map)
-                        st.toast("💾 Changes Saved to Memory!", icon="✅"); time.sleep(1); st.rerun()
+                        st.toast("💾 Saved to Memory!", icon="✅"); time.sleep(1); st.rerun()
             else:
-                st.info("ℹ️ No translation yet. You can edit the Source Text below before starting.")
+                st.info(f"ℹ️ Editing Source: {selected_file_name}")
                 if selected_file_name in st.session_state.file_edits: display_content = st.session_state.file_edits[selected_file_name]
                 else: display_content = "\n\n".join([f"[{line['id']}]\n{line['txt']}" for line in temp_proc.lines])
+                
+                # Search
                 c_search1, c_search2 = st.columns([0.8, 0.2])
                 search_query = c_search1.text_input("Find text...", label_visibility="collapsed", placeholder="Find text...")
                 is_non_roman = c_search2.checkbox("Non-Roman")
@@ -265,9 +273,11 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
                             clean_txt = re.sub(r'[^\w\s]', '', txt)
                             if re.search(r'[^\x00-\x7F]', clean_txt): match_found = True
                         if match_found: found_lines.append(lid)
-                    st.caption(f"🔍 Found in IDs: {', '.join(found_lines[:20])}..." if found_lines else "🔍 No matches.")
-                edited_content = st.text_area(f"Edit Source ({selected_file_name})", value=display_content, height=400, key=f"editor_{selected_file_name}")
-                if edited_content != display_content: st.session_state.file_edits[selected_file_name] = edited_content; st.success("✅ Source Updated! AI will use this text.")
+                    st.caption(f"🔍 Found: {', '.join(found_lines[:20])}..." if found_lines else "🔍 No matches.")
+                
+                # 🔥 HEIGHT = 250
+                edited_content = st.text_area(f"Edit Source", value=display_content, height=250, key=f"editor_{selected_file_name}")
+                if edited_content != display_content: st.session_state.file_edits[selected_file_name] = edited_content; st.success("✅ Source Updated!")
 
 # --- 4. TRANSLATION SETTINGS ---
 with st.expander("⚙️ Translation Settings", expanded=False):
@@ -373,7 +383,6 @@ if start_button:
 
                             prompt = f"""You are a professional translator.\nTASK: Translate {source_lang} to {target_lang}.\n[CONTEXT]: {file_context_summary}\n{glossary_text}\n{memory_block}\n[INSTRUCTIONS]: {user_instr}\n[FORMAT]:\n[ID]\nTranslated Text\n\n[INPUT]:\n{batch_txt}"""
                             retry = 3; success = False
-                            
                             while retry > 0:
                                 try:
                                     if i > 0: time.sleep(delay_ms / 1000.0)
@@ -382,11 +391,7 @@ if start_button:
                                     batch_tokens = 0
                                     for chunk_resp in response_stream:
                                         if chunk_resp.text: full_resp += chunk_resp.text; console_box.markdown(f"**Translating Batch {current_batch_num}...**\n\n```text\n{full_resp}\n```")
-                                        # 🔥 ACCURATE TOKEN COUNTING
-                                        if chunk_resp.usage_metadata:
-                                            batch_tokens = chunk_resp.usage_metadata.total_token_count
-                                    
-                                    # Add batch usage to global
+                                        if chunk_resp.usage_metadata: batch_tokens = chunk_resp.usage_metadata.total_token_count
                                     total_session_tokens += batch_tokens
                                     token_stats_ph.markdown(f"**Tokens (Batch):** `{batch_tokens}` | **Total:** `{total_session_tokens}`")
 
@@ -397,25 +402,14 @@ if start_button:
                                         for m in matches: mid = m.group(1).strip(); trans_map[mid] = m.group(2).strip(); completed_set.add(mid); found_any = True
                                         if found_any: job['trans_map'] = trans_map; job['done_ids'] = list(completed_set); st.session_state.job_progress[fname] = job; success = True; break
                                     if not success: console_box.warning("⚠️ Formatting Error. Retrying..."); retry -= 1; time.sleep(1)
-                                
                                 except Exception as e:
                                     if "429" in str(e).lower() and enable_cooldown:
-                                        # 🔥 429 LOGIC WITH VISUAL SLIDER
-                                        if cooldown_hits < 1: # Only 1 retry allowed
-                                            console_box.empty()
-                                            err_box = console_box.container()
-                                            prog_bar = err_box.progress(1.0)
-                                            for t in range(60, 0, -1):
-                                                err_box.error(f"🛑 Rate Limit Hit (429). Cooling down... {t}s")
-                                                prog_bar.progress(t / 60.0)
-                                                time.sleep(1)
-                                            err_box.empty()
-                                            cooldown_hits += 1
-                                            continue # Retry loop
-                                        else:
-                                            st.error("❌ CHECK API: Quota Exceeded or Limit Reached (429)."); st.stop()
+                                        if cooldown_hits < 1: 
+                                            console_box.empty(); err_box = console_box.container(); prog_bar = err_box.progress(1.0)
+                                            for t in range(60, 0, -1): err_box.error(f"🛑 Rate Limit Hit (429). Cooling down... {t}s"); prog_bar.progress(t / 60.0); time.sleep(1)
+                                            err_box.empty(); cooldown_hits += 1; continue
+                                        else: st.error("❌ CHECK API: Quota Exceeded (429)."); st.stop()
                                     else: console_box.error(f"Error: {e}"); retry -= 1; time.sleep(2)
-                            
                             if success: progress_text_ph.text(f"✅ Completed: {len(completed_set)} / {total_lines}"); progress_bar.progress(len(completed_set) / total_lines)
                             else: st.error("❌ Batch Failed. Progress Saved. Click Resume."); st.stop()
 
@@ -439,27 +433,51 @@ if start_button:
                                     console_box.success("✅ Revision Applied!")
                             except Exception as e: console_box.warning(f"Revision skipped: {e}")
 
-                        # Finalize File
-                        if trans_map:
-                            job['status'] = 'completed'; st.session_state.job_progress[fname] = job
-                            out = proc.get_output(trans_map)
-                            st.success(f"✅ {fname} Done!"); st.download_button(f"⬇️ DOWNLOAD", out, f"trans_{fname}", key=f"d{file_idx}")
-
-                    # ZIP & FINISH
-                    if len(uploaded_files) > 1:
-                        st.divider(); st.subheader("📦 Bulk Download")
-                        completed_files = []
-                        for f in uploaded_files:
-                            if f.name in st.session_state.job_progress and st.session_state.job_progress[f.name]['status'] == 'completed': completed_files.append(f)
-                        if len(completed_files) > 1:
-                            zip_buffer = io.BytesIO()
-                            with zipfile.ZipFile(zip_buffer, "w") as zf:
-                                for f_obj in completed_files:
-                                    fname = f_obj.name
-                                    temp_proc = SubtitleProcessor(fname, f_obj.getvalue()); temp_proc.parse()
-                                    final_map = st.session_state.job_progress[fname]['trans_map']
-                                    zf.writestr(f"trans_{fname}", temp_proc.get_output(final_map))
-                            st.download_button(label="⬇️ Download All (ZIP)", data=zip_buffer.getvalue(), file_name="translated_subtitles.zip", mime="application/zip", type="primary", use_container_width=True)
-
+                        # Mark Complete
+                        if trans_map: job['status'] = 'completed'; st.session_state.job_progress[fname] = job
+                    
                     st.balloons(); st.success("🎉 Process Complete!")
             except Exception as e: st.error(f"❌ Fatal Error: {e}")
+
+# --- 📥 PERSISTENT DOWNLOAD SECTION (FIXED) ---
+if st.session_state.job_progress:
+    st.divider()
+    st.markdown("### 📥 Finished Files & Downloads")
+    
+    # 1. Individual Files
+    completed_files = []
+    # Match session state data back to file objects
+    if uploaded_files:
+        for f_obj in uploaded_files:
+            fname = f_obj.name
+            if fname in st.session_state.job_progress and st.session_state.job_progress[fname]['status'] == 'completed':
+                completed_files.append(f_obj)
+                
+                # Generate latest output based on memory (edits included)
+                job = st.session_state.job_progress[fname]
+                temp_proc = SubtitleProcessor(fname, f_obj.getvalue()); temp_proc.parse()
+                out_txt = temp_proc.get_output(job['trans_map'])
+                
+                c_d1, c_d2 = st.columns([0.85, 0.15])
+                with c_d1: st.text(f"✅ {fname} (Ready)")
+                with c_d2: st.download_button("⬇️", out_txt, f"trans_{fname}", key=f"p_dl_{fname}")
+
+    # 2. ZIP Download
+    if len(completed_files) > 1:
+        st.markdown("#### 📦 Batch Download")
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            for f_obj in completed_files:
+                fname = f_obj.name
+                temp_proc = SubtitleProcessor(fname, f_obj.getvalue()); temp_proc.parse()
+                final_map = st.session_state.job_progress[fname]['trans_map']
+                zf.writestr(f"trans_{fname}", temp_proc.get_output(final_map))
+        
+        st.download_button(
+            label="⬇️ Download All (ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name="translated_subtitles.zip",
+            mime="application/zip",
+            type="primary",
+            use_container_width=True
+        )
