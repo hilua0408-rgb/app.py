@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V2.2", layout="wide")
+st.set_page_config(page_title="Gemini Subtitle Pro V2.3", layout="wide")
 
 # --- 📦 SESSION STATE ---
 if 'api_keys' not in st.session_state: st.session_state.api_keys = []
@@ -34,7 +34,7 @@ with st.sidebar:
 # --- 🖥️ MAIN INTERFACE ---
 st.markdown("### ✨ Gemini Subtitle Translator & Polisher")
 
-# --- PROCESSOR CLASS (Moved Up for Editor Access) ---
+# --- PROCESSOR CLASS ---
 class SubtitleProcessor:
     def __init__(self, filename, content_bytes):
         self.ext = os.path.splitext(filename)[1].lower()
@@ -87,7 +87,7 @@ class SubtitleProcessor:
         return output
 
 # --- 1. API CONFIGURATION & ADVANCED SETTINGS ---
-with st.expander("🛠️ API Configuration, Status & Advanced", expanded=False):
+with st.expander("🛠️ API Configuration & Keys", expanded=False):
     st.markdown("###### ➕ Add New API Key")
     c1, c2 = st.columns([0.85, 0.15])
     with c1:
@@ -120,7 +120,7 @@ with st.expander("🛠️ API Configuration, Status & Advanced", expanded=False)
                         if st.session_state.active_key == key: st.session_state.active_key = None
                         st.rerun()
 
-    # --- API STATUS & TECH SETTINGS (MOVED HERE) ---
+    # --- API STATUS ---
     if st.session_state.active_key:
         st.divider()
         c_s1, c_s2 = st.columns([0.7, 0.3])
@@ -134,17 +134,18 @@ with st.expander("🛠️ API Configuration, Status & Advanced", expanded=False)
                 except: st.session_state.api_status = "Dead 🔴"
                 st.rerun()
         
-        st.markdown("###### 🎛️ Advanced Tech Parameters")
-        c_a1, c_a2, c_a3 = st.columns(3)
-        with c_a1: enable_cooldown = st.checkbox("Smart Cooldown", value=True)
-        with c_a2: temp_val = st.slider("Temperature", 0.0, 2.0, 0.3)
-        with c_a3: max_tok_val = st.number_input("Max Output Tokens", 100, 65536, 65536)
-        delay_ms = 500
+        # --- HIDDEN ADVANCED SETTINGS (NESTED EXPANDER) ---
+        with st.expander("🎛️ Advanced Tech Parameters", expanded=False):
+            c_a1, c_a2, c_a3 = st.columns(3)
+            with c_a1: enable_cooldown = st.checkbox("Smart Cooldown", value=True)
+            with c_a2: temp_val = st.slider("Temperature", 0.0, 2.0, 0.3)
+            with c_a3: max_tok_val = st.number_input("Max Output Tokens", 100, 65536, 65536)
+            delay_ms = 500
     else:
         enable_cooldown=True; temp_val=0.3; max_tok_val=65536; delay_ms=500
 
-# --- 2. CLEAN FILE EDITOR (UPDATED) ---
-with st.expander("📝 File Editor (Clean View)", expanded=False):
+# --- 2. CLEAN FILE EDITOR WITH SEARCH (UPDATED) ---
+with st.expander("📝 File Editor (Search & Fix)", expanded=False):
     if not uploaded_files:
         st.info("⚠️ Please upload files in the sidebar first.")
     else:
@@ -154,28 +155,56 @@ with st.expander("📝 File Editor (Clean View)", expanded=False):
         current_file_obj = next((f for f in uploaded_files if f.name == selected_file_name), None)
         
         if current_file_obj:
-            # Logic: If already edited, load from session. If not, parse original -> simplify -> load.
+            # Load Content
             if selected_file_name in st.session_state.file_edits:
                 display_content = st.session_state.file_edits[selected_file_name]
             else:
-                # Parse the raw file to strip time-stamps
                 temp_proc = SubtitleProcessor(selected_file_name, current_file_obj.getvalue())
                 temp_proc.parse()
-                # Create Clean Format: [ID] \n Text
                 display_content = "\n\n".join([f"[{line['id']}]\n{line['txt']}" for line in temp_proc.lines])
 
-            # Editor Area
+            # --- SEARCH BAR ---
+            c_search1, c_search2, c_search3 = st.columns([0.6, 0.2, 0.2])
+            search_query = c_search1.text_input("Find text...", label_visibility="collapsed", placeholder="Find text...")
+            is_non_roman = c_search2.checkbox("Non-Roman")
+            
+            found_count = 0
+            if search_query or is_non_roman:
+                found_lines = []
+                # Simple logic to find lines in the current display content
+                # Split by IDs to search
+                matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', display_content, re.DOTALL))
+                for m in matches:
+                    lid = m.group(1)
+                    txt = m.group(2).strip()
+                    
+                    match_found = False
+                    if search_query and search_query.lower() in txt.lower():
+                        match_found = True
+                    if is_non_roman and re.search(r'[^\x00-\x7F]', txt): # Checks for non-ASCII
+                        match_found = True
+                    
+                    if match_found:
+                        found_lines.append(lid)
+                
+                found_count = len(found_lines)
+                if found_lines:
+                    st.caption(f"🔍 Found **{found_count}** matches in IDs: {', '.join(found_lines[:20])}..." if found_count > 20 else f"🔍 Found in IDs: {', '.join(found_lines)}")
+                else:
+                    st.caption("🔍 No matches found.")
+
+            # --- EDITOR ---
             edited_content = st.text_area(
-                f"Edit Text (Do not remove [ID] tags)", 
+                f"Edit Content ({selected_file_name})", 
                 value=display_content, 
                 height=300,
                 key=f"editor_{selected_file_name}"
             )
             
-            # Save Changes
+            # Save Logic
             if edited_content != display_content:
                 st.session_state.file_edits[selected_file_name] = edited_content
-                st.caption("✅ Saved! (Original timestamps will be applied automatically)")
+                st.success("✅ Changes saved! (AI will use this text)")
 
 # --- 3. TRANSLATION SETTINGS ---
 with st.expander("⚙️ Translation Settings", expanded=False):
@@ -259,7 +288,6 @@ if start_button:
                         clean_edit_str = st.session_state.file_edits[uploaded_file.name]
                         
                         # Parse the clean [ID] \n Text format
-                        # Regex finds [ID] followed by Text until next [ID]
                         user_edit_map = {}
                         edit_matches = re.finditer(r'\[(.*?)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[.*?\]|$)', clean_edit_str, re.DOTALL)
                         for m in edit_matches:
