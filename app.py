@@ -8,62 +8,87 @@ import io
 from google import genai
 from google.genai import types
 
+# --- ⚙️ CONFIG & SETTINGS MANAGEMENT ---
+SETTINGS_FILE = "gemini_settings.json"
+
+def load_settings():
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                saved = json.load(f)
+                if 'api_keys' in saved: st.session_state.api_keys = saved['api_keys']
+                if 'active_key' in saved: st.session_state.active_key = saved['active_key']
+                for k, v in saved.items():
+                    st.session_state[f"saved_{k}"] = v
+        except: pass
+
+def save_current_settings(model, src, tgt, batch, temp, tok, mem, ana, rev, u_prompt, a_prompt, r_prompt):
+    data = {
+        "api_keys": st.session_state.api_keys,
+        "active_key": st.session_state.active_key,
+        "model_name": model,
+        "source_lang": src,
+        "target_lang": tgt,
+        "batch_sz": batch,
+        "temp_val": temp,
+        "max_tok_val": tok,
+        "enable_memory": mem,
+        "enable_analysis": ana,
+        "enable_revision": rev,
+        "user_instr": u_prompt,
+        "analysis_instr": a_prompt,
+        "revision_instr": r_prompt
+    }
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(data, f)
+    st.toast("💾 Settings Saved!", icon="✅")
+
 # Page Setup
-st.set_page_config(page_title="Gemini Subtitle Pro V4.1 (Persistent UI)", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="Gemini Subtitle Pro V4.3 (Layout Fix)", layout="wide", page_icon="🎬")
 
-# --- 🎨 CUSTOM CSS ---
-st.markdown("""
-<style>
-    .stButton>button { border-radius: 8px; font-weight: bold; }
-    
-    /* 🔥 COMPACT FILE UPLOADER */
-    [data-testid='stFileUploader'] { padding-top: 0px; margin-top: -20px; }
-    [data-testid='stFileUploader'] section { padding: 0px; min-height: 0px; border: none; background-color: transparent; }
-    [data-testid='stFileUploader'] .st-emotion-cache-1ae8axi, 
-    [data-testid='stFileUploader'] .st-emotion-cache-1erivf3 { display: none; }
-    [data-testid='stFileUploader'] button { width: 100%; margin-top: 0px; }
-
-    /* 🔥 ALIGNMENT */
-    div[data-testid="column"] { align-items: center; display: flex; }
-    
-    /* 🔥 EDITOR TEXT AREAS (Compact Font) */
-    .stTextArea textarea { font-family: monospace; font-size: 13px; line-height: 1.4; }
-    
-    /* 🔥 PROGRESS BAR COLOR */
-    .stProgress > div > div > div > div { background-color: #ff4b4b; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- 📦 SESSION STATE ---
+# --- 📦 SESSION STATE INIT ---
 if 'api_keys' not in st.session_state: st.session_state.api_keys = []
 if 'active_key' not in st.session_state: st.session_state.active_key = None
 if 'api_status' not in st.session_state: st.session_state.api_status = "Unknown"
 if 'skipped_files' not in st.session_state: st.session_state.skipped_files = []
 if 'file_edits' not in st.session_state: st.session_state.file_edits = {}
 if 'job_progress' not in st.session_state: st.session_state.job_progress = {}
-
-# 🔥 Glossary State
 if 'glossary' not in st.session_state: st.session_state.glossary = [] 
 if 'edit_index' not in st.session_state: st.session_state.edit_index = None 
+
+if 'settings_loaded' not in st.session_state:
+    load_settings()
+    st.session_state.settings_loaded = True
+
+# --- 🎨 CUSTOM CSS ---
+st.markdown("""
+<style>
+    .stButton>button { border-radius: 8px; font-weight: bold; }
+    [data-testid='stFileUploader'] { padding-top: 0px; margin-top: -20px; }
+    [data-testid='stFileUploader'] section { padding: 0px; min-height: 0px; border: none; background-color: transparent; }
+    [data-testid='stFileUploader'] .st-emotion-cache-1ae8axi, 
+    [data-testid='stFileUploader'] .st-emotion-cache-1erivf3 { display: none; }
+    [data-testid='stFileUploader'] button { width: 100%; margin-top: 0px; }
+    div[data-testid="column"] { align-items: center; display: flex; }
+    .stTextArea textarea { font-family: monospace; font-size: 13px; line-height: 1.4; }
+    .stProgress > div > div > div > div { background-color: #ff4b4b; }
+</style>
+""", unsafe_allow_html=True)
 
 # --- 📱 SIDEBAR ---
 with st.sidebar:
     st.header("📁 File Upload")
     uploaded_files = st.file_uploader("Upload Subtitle Files", type=['srt', 'vtt', 'ass'], accept_multiple_files=True)
     st.markdown("---")
-    
     if uploaded_files:
         current_filenames = [f.name for f in uploaded_files]
         progress_keys = list(st.session_state.job_progress.keys())
         for key in progress_keys:
             if key not in current_filenames: del st.session_state.job_progress[key]
     else: st.session_state.job_progress = {}
-
     if st.session_state.skipped_files:
-        st.warning(f"⏩ Skipped Files: {len(st.session_state.skipped_files)}")
-        if st.button("Clear Skipped History"):
-            st.session_state.skipped_files = []
-            st.rerun()
+        st.warning(f"⏩ Skipped: {len(st.session_state.skipped_files)}")
+        if st.button("Clear History"): st.session_state.skipped_files = []; st.rerun()
 
 # --- 🖥️ MAIN INTERFACE ---
 st.markdown("### ✨ Gemini Subtitle Translator & Polisher")
@@ -75,7 +100,6 @@ class SubtitleProcessor:
         try: self.raw = content_bytes.decode('utf-8').replace('\r\n', '\n')
         except: self.raw = content_bytes.decode('latin-1').replace('\r\n', '\n')
         self.lines = []
-        
     def parse(self):
         if self.ext == '.srt': self.srt()
         elif self.ext == '.vtt': self.vtt()
@@ -122,7 +146,6 @@ class SubtitleProcessor:
 
 # --- 1. API CONFIGURATION ---
 with st.expander("🛠️ API Configuration & Keys", expanded=False):
-    st.markdown("###### ➕ Add New API Key")
     c1, c2 = st.columns([0.85, 0.15])
     with c1: new_key_input = st.text_input("Key Input", placeholder="Paste 'AIza...' key here", label_visibility="collapsed")
     with c2:
@@ -134,8 +157,6 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
                     if not st.session_state.active_key: st.session_state.active_key = clean_key
                     st.rerun()
             else: st.toast("❌ Invalid Key!")
-
-    st.markdown("###### 🔑 Saved Keys")
     with st.container(height=120, border=True):
         if not st.session_state.api_keys: st.caption("No keys saved.")
         else:
@@ -165,9 +186,11 @@ with st.expander("🛠️ API Configuration & Keys", expanded=False):
                 st.rerun()
         with st.expander("🎛️ Advanced Tech Parameters", expanded=False):
             c_a1, c_a2, c_a3 = st.columns(3)
+            def_temp = st.session_state.get('saved_temp_val', 0.3)
+            def_tok = st.session_state.get('saved_max_tok_val', 65536)
             with c_a1: enable_cooldown = st.checkbox("Smart Cooldown", value=True)
-            with c_a2: temp_val = st.slider("Temperature", 0.0, 2.0, 0.3)
-            with c_a3: max_tok_val = st.number_input("Max Output Tokens", 100, 65536, 65536)
+            with c_a2: temp_val = st.slider("Temperature", 0.0, 2.0, def_temp)
+            with c_a3: max_tok_val = st.number_input("Max Output Tokens", 100, 65536, def_tok)
             delay_ms = 500
     else: enable_cooldown=True; temp_val=0.3; max_tok_val=65536; delay_ms=500
 
@@ -214,7 +237,6 @@ with st.expander("📚 Words Menu (Glossary)", expanded=False):
             except: st.error("Invalid JSON")
 
 # --- 3. 📝 SMART FILE EDITOR (DUAL MODE) ---
-# Always visible if files uploaded
 with st.expander("📝 File Editor (Original & Translated)", expanded=True):
     if not uploaded_files:
         st.info("⚠️ Please upload files in the sidebar first.")
@@ -227,7 +249,6 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
             temp_proc = SubtitleProcessor(selected_file_name, current_file_obj.getvalue()); temp_proc.parse()
             is_translated = False; translated_content = ""
             
-            # Check if this file has progress data
             if selected_file_name in st.session_state.job_progress:
                 job = st.session_state.job_progress[selected_file_name]
                 if 'trans_map' in job and job['trans_map']:
@@ -235,18 +256,36 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
                     sorted_ids = sorted(job['trans_map'].keys(), key=lambda x: int(x) if x.isdigit() else x)
                     translated_content = "\n\n".join([f"[{vid}]\n{job['trans_map'][vid]}" for vid in sorted_ids])
 
+            # DUAL MODE with Search on Translated side
             if is_translated:
                 st.success(f"✅ Editing: {selected_file_name} (Translated)")
                 col_orig, col_trans = st.columns(2)
+                
                 with col_orig:
                     st.markdown("**Original (Preview)**")
                     orig_text = "\n\n".join([f"[{line['id']}]\n{line['txt']}" for line in temp_proc.lines])
-                    # 🔥 HEIGHT = 250 (3 Line Box style)
-                    st.text_area("Original", value=orig_text, height=250, disabled=True, key=f"orig_view_{selected_file_name}")
+                    st.text_area("Original", value=orig_text, height=350, disabled=True, key=f"orig_view_{selected_file_name}")
+                
                 with col_trans:
+                    # 🔥 NEW: Search Tools ABOVE Translated Text
                     st.markdown("**Translated (Editable)**")
-                    # 🔥 HEIGHT = 250 (3 Line Box style)
-                    new_trans_text = st.text_area("Edit Translation", value=translated_content, height=250, key=f"trans_edit_{selected_file_name}")
+                    c_search1, c_search2 = st.columns([0.8, 0.2])
+                    search_query = c_search1.text_input("Find text...", label_visibility="collapsed", placeholder="Find text...", key=f"search_trans_{selected_file_name}")
+                    is_non_roman = c_search2.checkbox("Non-Roman", key=f"nr_trans_{selected_file_name}")
+                    
+                    if search_query or is_non_roman:
+                        found_lines = []
+                        matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', translated_content, re.DOTALL))
+                        for m in matches:
+                            lid = m.group(1); txt = m.group(2).strip(); match_found = False
+                            if search_query and search_query.lower() in txt.lower(): match_found = True
+                            if is_non_roman:
+                                clean_txt = re.sub(r'[^\w\s]', '', txt)
+                                if re.search(r'[^\x00-\x7F]', clean_txt): match_found = True
+                            if match_found: found_lines.append(lid)
+                        st.caption(f"🔍 Found: {', '.join(found_lines[:20])}..." if found_lines else "🔍 No matches.")
+
+                    new_trans_text = st.text_area("Edit Translation", value=translated_content, height=280, key=f"trans_edit_{selected_file_name}", label_visibility="collapsed")
                     
                     if new_trans_text != translated_content:
                         new_map = {}
@@ -254,15 +293,16 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
                         for m in matches: new_map[m.group(1).strip()] = m.group(2).strip()
                         st.session_state.job_progress[selected_file_name]['trans_map'].update(new_map)
                         st.toast("💾 Saved to Memory!", icon="✅"); time.sleep(1); st.rerun()
+            
+            # SOURCE MODE
             else:
                 st.info(f"ℹ️ Editing Source: {selected_file_name}")
                 if selected_file_name in st.session_state.file_edits: display_content = st.session_state.file_edits[selected_file_name]
                 else: display_content = "\n\n".join([f"[{line['id']}]\n{line['txt']}" for line in temp_proc.lines])
                 
-                # Search
                 c_search1, c_search2 = st.columns([0.8, 0.2])
-                search_query = c_search1.text_input("Find text...", label_visibility="collapsed", placeholder="Find text...")
-                is_non_roman = c_search2.checkbox("Non-Roman")
+                search_query = c_search1.text_input("Find text...", label_visibility="collapsed", placeholder="Find text...", key=f"search_src_{selected_file_name}")
+                is_non_roman = c_search2.checkbox("Non-Roman", key=f"nr_src_{selected_file_name}")
                 if search_query or is_non_roman:
                     found_lines = []
                     matches = list(re.finditer(r'\[(\d+)\]\s*(?:^|\n|\s+)(.*?)(?=\n\[\d+\]|$)', display_content, re.DOTALL))
@@ -275,17 +315,21 @@ with st.expander("📝 File Editor (Original & Translated)", expanded=True):
                         if match_found: found_lines.append(lid)
                     st.caption(f"🔍 Found: {', '.join(found_lines[:20])}..." if found_lines else "🔍 No matches.")
                 
-                # 🔥 HEIGHT = 250
-                edited_content = st.text_area(f"Edit Source", value=display_content, height=250, key=f"editor_{selected_file_name}")
+                edited_content = st.text_area(f"Edit Source", value=display_content, height=350, key=f"editor_{selected_file_name}")
                 if edited_content != display_content: st.session_state.file_edits[selected_file_name] = edited_content; st.success("✅ Source Updated!")
 
 # --- 4. TRANSLATION SETTINGS ---
 with st.expander("⚙️ Translation Settings", expanded=False):
     col1, col2 = st.columns(2)
+    def_model = st.session_state.get('saved_model_name', "gemini-2.0-flash")
+    def_src = st.session_state.get('saved_source_lang', "English")
+    def_tgt = st.session_state.get('saved_target_lang', "Roman Hindi")
+    def_batch = st.session_state.get('saved_batch_sz', 20)
     with col1:
         default_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"]
         if 'model_list' not in st.session_state: st.session_state['model_list'] = default_models
-        model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'])
+        if def_model not in st.session_state['model_list']: st.session_state['model_list'].insert(0, def_model)
+        model_name = st.selectbox("MODEL_NAME", st.session_state['model_list'], index=st.session_state['model_list'].index(def_model) if def_model in st.session_state['model_list'] else 0)
         if st.button("🔄 Fetch Models"):
             if st.session_state.active_key:
                 try:
@@ -293,22 +337,33 @@ with st.expander("⚙️ Translation Settings", expanded=False):
                         st.session_state['model_list'] = sorted([m.name.replace("models/","") for m in client.models.list() if 'gemini' in m.name.lower()], reverse=True)
                         st.success("Updated!"); st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
-        source_lang = st.text_input("SOURCE_LANGUAGE", "English")
+        source_lang = st.text_input("SOURCE_LANGUAGE", def_src)
     with col2:
-        target_lang = st.text_input("TARGET_LANGUAGE", "Roman Hindi")
-        batch_sz = st.number_input("BATCH_SIZE", 1, 500, 20)
+        target_lang = st.text_input("TARGET_LANGUAGE", def_tgt)
+        batch_sz = st.number_input("BATCH_SIZE", 1, 500, def_batch)
 
 # --- FEATURES & EXECUTION ---
-st.markdown("### ⚡ Workflow Steps")
-enable_memory = st.checkbox("🧠 1. Context Memory", value=True)
+cs1, cs2 = st.columns([0.85, 0.15], vertical_alignment="bottom")
+with cs1: st.markdown("### ⚡ Workflow Steps")
+def_mem = st.session_state.get('saved_enable_memory', True)
+def_ana = st.session_state.get('saved_enable_analysis', False)
+def_rev = st.session_state.get('saved_enable_revision', False)
+def_u_instr = st.session_state.get('saved_user_instr', "Translate into natural Roman Hindi. Keep Anime terms in English.")
+def_a_instr = st.session_state.get('saved_analysis_instr', "")
+def_r_instr = st.session_state.get('saved_revision_instr', "")
+
+enable_memory = st.checkbox("🧠 1. Context Memory", value=def_mem)
 st.divider()
-enable_analysis = st.checkbox("🧐 2. Deep File Analysis", value=False)
-analysis_instr = st.text_area("Analysis Note", placeholder="Context...", height=68) if enable_analysis else ""
+enable_analysis = st.checkbox("🧐 2. Deep File Analysis", value=def_ana)
+analysis_instr = st.text_area("Analysis Note", value=def_a_instr, placeholder="Context...", height=68) if enable_analysis else ""
 st.divider()
-enable_revision = st.checkbox("✨ 3. Revision / Polish", value=False)
-revision_instr = st.text_area("Revision Note", placeholder="Instructions...", height=68) if enable_revision else ""
+enable_revision = st.checkbox("✨ 3. Revision / Polish", value=def_rev)
+revision_instr = st.text_area("Revision Note", value=def_r_instr, placeholder="Instructions...", height=68) if enable_revision else ""
 st.markdown("---")
-user_instr = st.text_area("USER_INSTRUCTION", "Translate into natural Roman Hindi. Keep Anime terms in English.")
+user_instr = st.text_area("USER_INSTRUCTION", value=def_u_instr)
+
+if cs2.button("💾 Save Settings", key="real_save_btn", help="Save ALL settings permanently", use_container_width=True):
+    save_current_settings(model_name, source_lang, target_lang, batch_sz, temp_val, max_tok_val, enable_memory, enable_analysis, enable_revision, user_instr, analysis_instr, revision_instr)
 
 work_status = "new" 
 for f in uploaded_files:
@@ -439,30 +494,23 @@ if start_button:
                     st.balloons(); st.success("🎉 Process Complete!")
             except Exception as e: st.error(f"❌ Fatal Error: {e}")
 
-# --- 📥 PERSISTENT DOWNLOAD SECTION (FIXED) ---
+# --- 📥 PERSISTENT DOWNLOAD SECTION ---
 if st.session_state.job_progress:
     st.divider()
     st.markdown("### 📥 Finished Files & Downloads")
-    
-    # 1. Individual Files
     completed_files = []
-    # Match session state data back to file objects
     if uploaded_files:
         for f_obj in uploaded_files:
             fname = f_obj.name
             if fname in st.session_state.job_progress and st.session_state.job_progress[fname]['status'] == 'completed':
                 completed_files.append(f_obj)
-                
-                # Generate latest output based on memory (edits included)
                 job = st.session_state.job_progress[fname]
                 temp_proc = SubtitleProcessor(fname, f_obj.getvalue()); temp_proc.parse()
                 out_txt = temp_proc.get_output(job['trans_map'])
-                
                 c_d1, c_d2 = st.columns([0.85, 0.15])
                 with c_d1: st.text(f"✅ {fname} (Ready)")
                 with c_d2: st.download_button("⬇️", out_txt, f"trans_{fname}", key=f"p_dl_{fname}")
 
-    # 2. ZIP Download
     if len(completed_files) > 1:
         st.markdown("#### 📦 Batch Download")
         zip_buffer = io.BytesIO()
@@ -472,12 +520,4 @@ if st.session_state.job_progress:
                 temp_proc = SubtitleProcessor(fname, f_obj.getvalue()); temp_proc.parse()
                 final_map = st.session_state.job_progress[fname]['trans_map']
                 zf.writestr(f"trans_{fname}", temp_proc.get_output(final_map))
-        
-        st.download_button(
-            label="⬇️ Download All (ZIP)",
-            data=zip_buffer.getvalue(),
-            file_name="translated_subtitles.zip",
-            mime="application/zip",
-            type="primary",
-            use_container_width=True
-        )
+        st.download_button("⬇️ Download All (ZIP)", zip_buffer.getvalue(), "translated_subtitles.zip", "application/zip", type="primary", use_container_width=True)
